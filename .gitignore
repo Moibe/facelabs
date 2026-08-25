@@ -1,0 +1,18 @@
+# venv
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# Datos: NUNCA versionar imágenes de personas.
+# El consentimiento cubre el experimento, no un repo git perpetuo.
+data/*
+!data/.gitkeep
+!data/README.md
+
+# Salidas del harness (regenerables desde data/ + manifests/)
+out/*
+!out/.gitkeep
+
+# Modelos descargados por insightface (~300 MB, licencia no comercial)
+models/

@@ -1,0 +1,19 @@
+[
+  {"img_a": "../data/ana/ana_01.jpg", "img_b": "../data/ana/ana_02.jpg", "same_person": true,  "notes": "misma sesion, misma luz — caso facil, sirve de techo"},
+  {"img_a": "../data/ana/ana_01.jpg", "img_b": "../data/ana/ana_03.jpg", "same_person": true,  "notes": "interior vs exterior, luz muy distinta"},
+  {"img_a": "../data/ana/ana_01.jpg", "img_b": "../data/ana/ana_04.jpg", "same_person": true,  "notes": "perfil ~45 grados"},
+  {"img_a": "../data/ana/ana_01.jpg", "img_b": "../data/ana/ana_05.jpg", "same_person": true,  "notes": "5 anios de diferencia"},
+  {"img_a": "../data/ana/ana_01.jpg", "img_b": "../data/ana/ana_06.jpg", "same_person": true,  "notes": "con lentes"},
+  {"img_a": "../data/ana/ana_03.jpg", "img_b": "../data/ana/ana_07.jpg", "same_person": true,  "notes": "baja resolucion (foto de credencial)"},
+
+  {"img_a": "../data/beto/beto_01.jpg", "img_b": "../data/beto/beto_02.jpg", "same_person": true, "notes": "misma sesion"},
+  {"img_a": "../data/beto/beto_01.jpg", "img_b": "../data/beto/beto_03.jpg", "same_person": true, "notes": "con barba vs rasurado"},
+
+  {"img_a": "../data/ana/ana_01.jpg",  "img_b": "../data/beto/beto_01.jpg", "same_person": false, "notes": "hermanos — el caso que rompe el threshold"},
+  {"img_a": "../data/ana/ana_03.jpg",  "img_b": "../data/beto/beto_02.jpg", "same_person": false, "notes": "hermanos, luz distinta"},
+  {"img_a": "../data/ana/ana_01.jpg",  "img_b": "../data/cris/cris_01.jpg", "same_person": false, "notes": "parecido moderado, sin parentesco"},
+  {"img_a": "../data/beto/beto_01.jpg","img_b": "../data/cris/cris_01.jpg", "same_person": false, "notes": "parecido moderado"},
+  {"img_a": "../data/ana/ana_01.jpg",  "img_b": "../data/dani/dani_01.jpg","same_person": false, "notes": "rasgos genuinamente distintos — piso"},
+  {"img_a": "../data/beto/beto_01.jpg","img_b": "../data/dani/dani_01.jpg","same_person": false, "notes": "rasgos genuinamente distintos — piso"},
+  {"img_a": "../data/cris/cris_01.jpg","img_b": "../data/dani/dani_01.jpg","same_person": false, "notes": "rasgos genuinamente distintos — piso"}
+]

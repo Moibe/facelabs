@@ -1,0 +1,9 @@
+# --- Núcleo del pipeline ---
+insightface==0.7.3
+onnxruntime-gpu>=1.22.0      # >=1.22 es el piso para Blackwell/sm_120 (RTX 50xx)
+opencv-python>=4.10
+numpy>=1.26,<2.0             # ver nota en README: insightface 0.7.3 compila contra numpy 1.x
+
+# --- Análisis de calibración ---
+scipy>=1.13                  # intervalos Clopper-Pearson exactos sobre FMR/FNMR
+matplotlib>=3.8              # histograma de distribuciones
