@@ -541,6 +541,66 @@ def test_init_manifest():
         check(True, "modo invalido lanza ManifestError")
 
 
+# ================================================== 8. provider en el reporte
+def _csv_min(destino, provs=None):
+    """CSV minimo con 2 match y 2 non-match. provs: (pa, pb) por fila, o None."""
+    import csv as _csv
+    filas = [
+        ("yo/a.jpg", "yo/b.jpg", "True", 0.90),
+        ("yo/a.jpg", "yo/c.jpg", "True", 0.80),
+        ("yo/a.jpg", "fam/x.jpg", "False", 0.30),
+        ("fam/x.jpg", "otra/z.jpg", "False", 0.10),
+    ]
+    cols = ["img_a", "img_b", "same_person", "score", "pair_ok"]
+    if provs is not None:
+        cols += ["provider_a", "provider_b"]
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    with open(destino, "w", newline="", encoding="utf-8") as f:
+        w = _csv.writer(f)
+        w.writerow(cols)
+        for i, (a, b, same, sc) in enumerate(filas):
+            fila = [a, b, same, f"{sc:.6f}", "True"]
+            if provs is not None:
+                fila += list(provs[i])
+            w.writerow(fila)
+    return destino
+
+
+def test_provider_en_reporte():
+    print("\n[8] provider — procedencia de los embeddings en el reporte")
+    d = TMP / "prov"
+    CUDA, CPU = "CUDAExecutionProvider", "CPUExecutionProvider"
+
+    # Caso 1: todo en el mismo provider -> se registra, sin alarma.
+    uno = _csv_min(d / "uno.csv", [(CUDA, CUDA)] * 4)
+    r1 = calibrar(uno, d / "out1", verbose=False)
+    check(f"Provider: {CUDA}" in r1["reporte"],
+          "con un solo provider lo deja asentado en el reporte")
+    check("NO salieron todos del mismo" not in r1["reporte"],
+          "con un solo provider NO avisa nada")
+
+    # Caso 2: set mezclado -> tiene que avisar y decir cuanto de cada uno.
+    mezcla = _csv_min(d / "mezcla.csv",
+                      [(CUDA, CUDA), (CUDA, CPU), (CPU, CPU), (CPU, CUDA)])
+    r2 = calibrar(mezcla, d / "out2", verbose=False)
+    check("NO salieron todos del mismo provider" in r2["reporte"],
+          "detecta el set con providers mezclados")
+    check(f"{CUDA}" in r2["reporte"] and f"{CPU}" in r2["reporte"],
+          "nombra los dos providers involucrados")
+    check("--force" in r2["reporte"],
+          "dice que hacer al respecto (--force en un solo device)")
+    # 8 lados de par en total, 4 de cada uno.
+    check("4 lado(s) de par" in r2["reporte"],
+          "cuenta cuantos lados de par salieron de cada provider")
+
+    # Caso 3: CSV viejo sin las columnas -> no truena ni inventa.
+    viejo = _csv_min(d / "viejo.csv", provs=None)
+    r3 = calibrar(viejo, d / "out3", verbose=False)
+    check(r3["ok"], "un CSV sin columnas de provider sigue calibrando")
+    check("Provider:" not in r3["reporte"] and "provider" not in r3["reporte"].lower(),
+          "sin las columnas no menciona el tema en vez de adivinar")
+
+
 def main() -> int:
     print(f"Directorio temporal: {TMP}")
     test_compare()
@@ -550,6 +610,7 @@ def main() -> int:
     test_dependencia()
     test_init_manifest()
     test_harness_end_to_end()
+    test_provider_en_reporte()
 
     print("\n" + "=" * 60)
     if FALLOS:

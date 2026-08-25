@@ -30,6 +30,11 @@ COLUMNAS = [
     "pair_ok", "error_a", "error_b",
     "n_faces_a", "n_faces_b", "face_selection_a", "face_selection_b",
     "sha256_a", "sha256_b",
+    # De donde salio cada embedding. Va al CSV porque el provider NO entra en
+    # la llave de cache (cambiar de device no invalida lo guardado, y eso es
+    # correcto), asi que sin estas columnas un set mezclado GPU/CPU seria
+    # invisible justo en el archivo del que salen las conclusiones.
+    "provider_a", "provider_b",
 ]
 
 
@@ -110,7 +115,8 @@ def _extraer_todas(pares, runtime, store: EmbeddingStore, face_policy: str,
         if not ruta.is_file():
             resultados[clave] = {"ok": False, "error": "FILE_NOT_FOUND",
                                  "sha256": None, "det_score": None,
-                                 "n_faces": 0, "face_selection": None}
+                                 "n_faces": 0, "face_selection": None,
+                                 "provider": None}
             if verbose:
                 print(f"  [{k}/{len(rutas)}] FILE_NOT_FOUND  {ruta}")
             continue
@@ -126,6 +132,9 @@ def _extraer_todas(pares, runtime, store: EmbeddingStore, face_policy: str,
                 "det_score": float(fila["det_score"]),
                 "n_faces": int(fila["n_faces_detected"]),
                 "face_selection": fila["face_selection"],
+                # El provider con el que se calculo ORIGINALMENTE, no el de
+                # esta corrida: es lo que describe al embedding que se reusa.
+                "provider": fila["provider"],
             }
             if verbose:
                 print(f"  [{k}/{len(rutas)}] cache          {ruta.name}")
@@ -139,6 +148,7 @@ def _extraer_todas(pares, runtime, store: EmbeddingStore, face_policy: str,
                 "embedding": r["embedding"], "det_score": r["det_score"],
                 "n_faces": r["n_faces_detected"],
                 "face_selection": r["face_selection"],
+                "provider": runtime.provider_activo,
             }
             if verbose:
                 print(f"  [{k}/{len(rutas)}] ok det={r['det_score']:.3f}  {ruta.name}")
@@ -148,6 +158,7 @@ def _extraer_todas(pares, runtime, store: EmbeddingStore, face_policy: str,
                 "ok": False, "error": r["error"], "sha256": r["image_sha256"],
                 "det_score": r["det_score"], "n_faces": r["n_faces_detected"],
                 "face_selection": r["face_selection"],
+                "provider": runtime.provider_activo,
             }
             if verbose:
                 print(f"  [{k}/{len(rutas)}] {r['error']}  {ruta.name}"
@@ -194,6 +205,7 @@ def run_manifest(manifest_path: str | Path, runtime, csv_out: str | Path, *,
             "face_selection_a": a["face_selection"] or "",
             "face_selection_b": b["face_selection"] or "",
             "sha256_a": (a["sha256"] or "")[:16], "sha256_b": (b["sha256"] or "")[:16],
+            "provider_a": a.get("provider") or "", "provider_b": b.get("provider") or "",
         })
 
     salida = Path(csv_out)

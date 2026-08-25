@@ -46,6 +46,45 @@ Si caes a CPU: los embeddings son equivalentes y **la calibración sigue siendo
 válida**; solo cambia la velocidad. Corre con `--device cpu` a sabiendas en vez
 de creer que estás usando la GPU.
 
+### CPU o GPU
+
+Las dos están soportadas de primera clase, no como parche: `--device cpu` en
+cualquier comando del modelo, y `./setup.sh --cpu` instala `onnxruntime` en vez
+de `onnxruntime-gpu` (**desinstalando** el otro primero — los dos exponen el
+mismo módulo `onnxruntime` y si conviven, cuál gana depende del orden de
+instalación; es la causa clásica de "tengo el -gpu instalado pero corre en CPU").
+
+A la escala de este PoC la GPU no aporta nada, y no por "son pocas fotos":
+
+- **La extracción se paga una sola vez.** Cada foto se procesa, su embedding se
+  guarda, y no se vuelve a tocar. Aunque CPU fuera 20× más lento, son segundos
+  para una docena de fotos.
+- **El ciclo que vas a iterar no usa el modelo.** Recalibrar, mover el
+  threshold, agregar pares: todo eso es aritmética sobre el CSV. `calibrate` ni
+  importa onnxruntime.
+
+Práctico: intenta `./setup.sh` primero. Si el stack de CUDA pelea —riesgo real en
+Blackwell— no le dediques horas: `./setup.sh --cpu` y sigue. La GPU vale
+arreglarla si escalas a cientos de imágenes.
+
+#### Un matiz: no son bit a bit idénticos
+
+El orden de las sumas en float32 difiere, lo que mueve el embedding ~1e-6.
+Irrelevante frente a un threshold que vive en la segunda o tercera decimal.
+
+Pero **el detector tiene un umbral adentro** (`det_thresh=0.5`). Una cara
+marginal —borrosa, chica, ángulo extremo— puede quedar apenas por encima en un
+provider y apenas por debajo en el otro; y un corrimiento de fracción de pixel
+en el bbox cambia el recorte, que mueve el embedding bastante más que 1e-6. Para
+una cara nítida da igual; para el caso difícil que metiste a propósito, no
+necesariamente.
+
+Por eso el provider **no** entra en la llave de caché (forzar reprocesar todo
+por 1e-6 sería peor), pero sí viaja al CSV en las columnas `provider_a` /
+`provider_b`, y el reporte avisa si el set salió de providers mezclados —cosa
+que pasa sin más al extraer en GPU y luego correr con `--device cpu`, porque lo
+ya guardado sale de caché y solo lo nuevo se recalcula.
+
 ---
 
 ## Uso

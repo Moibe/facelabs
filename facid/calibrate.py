@@ -311,6 +311,23 @@ def histograma_png(match: np.ndarray, nonmatch: np.ndarray, destino: Path,
     return destino
 
 
+def _providers_usados(datos: dict[str, Any]) -> dict[str, int]:
+    """Cuenta en que provider se calculo cada lado de par.
+
+    Tolera CSVs sin las columnas (los generados antes de que existieran):
+    devuelve vacio y el reporte simplemente no menciona el tema, en vez de tronar.
+    """
+    from collections import Counter
+    c: Counter[str] = Counter()
+    for filas in (datos["filas_match"], datos["filas_nonmatch"]):
+        for f in filas:
+            for lado in ("a", "b"):
+                v = (f.get(f"provider_{lado}") or "").strip()
+                if v:
+                    c[v] += 1
+    return dict(c)
+
+
 def _pct(x: float) -> str:
     return "  n/a " if (x is None or (isinstance(x, float) and math.isnan(x))) else f"{x*100:5.1f}%"
 
@@ -371,6 +388,25 @@ def calibrar(csv_path: str | Path, out_dir: str | Path, *,
             add("       match conectan esas dos fotos como la MISMA persona.")
         add("       Es un error de captura en el manifiesto. Arreglalo antes de creerle")
         add("       a cualquier numero de este reporte.")
+
+    # Procedencia de los embeddings. El provider no invalida la cache (cambiar de
+    # device por una diferencia de 1e-6 seria peor), asi que un set mezclado es
+    # posible sin que nada avise. Aqui se avisa.
+    provs = _providers_usados(datos)
+    if len(provs) == 1:
+        add(f"   Provider: {next(iter(provs))} (todos los embeddings).")
+    elif len(provs) > 1:
+        add("")
+        add("   [!] Los embeddings NO salieron todos del mismo provider:")
+        for nombre, n in sorted(provs.items(), key=lambda kv: -kv[1]):
+            add(f"       {nombre:<26} {n} lado(s) de par")
+        add("       Pasa al extraer en GPU y despues correr con --device cpu (o al")
+        add("       reves): lo ya guardado sale de cache y solo lo nuevo se recalcula.")
+        add("       Para una cara nitida da igual (difieren ~1e-6). Pero el detector")
+        add("       tiene un umbral adentro, asi que una cara marginal —borrosa, chica,")
+        add("       angulo extremo— puede recortarse distinto y mover el score bastante")
+        add("       mas. Si un par raro involucra fotos de providers distintos, rehazlo")
+        add("       con --force en un solo device antes de concluir algo.")
 
     # -------- Preguntas 1 y 2 del criterio de aceptacion --------
     add("\n1) MISMA PERSONA (match)")
