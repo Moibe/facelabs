@@ -6,8 +6,11 @@ __pycache__/
 
 # Datos: NUNCA versionar imágenes de personas.
 # El consentimiento cubre el experimento, no un repo git perpetuo.
-data/*
-!data/.gitkeep
+# Se ignoran los ARCHIVOS pero se dejan pasar los directorios y sus .gitkeep,
+# para que la estructura de carpetas exista al clonar en la maquina con GPU.
+data/**
+!data/**/
+!data/**/.gitkeep
 !data/README.md
 
 # Salidas del harness (regenerables desde data/ + manifests/)
