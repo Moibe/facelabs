@@ -33,7 +33,10 @@ from facid.compare import compare  # noqa: E402
 from facid.decide import decide  # noqa: E402
 from facid.errors import ErrorCode, FacePolicy  # noqa: E402
 from facid.extract import extract_embedding  # noqa: E402
-from facid.harness import run_manifest  # noqa: E402
+from facid.dependencia import estructura, jackknife_por_persona  # noqa: E402
+from facid.harness import (  # noqa: E402
+    ManifestError, cargar_manifiesto, init_manifest, run_manifest,
+)
 from facid.store import EmbeddingStore  # noqa: E402
 
 FALLOS: list[str] = []
@@ -392,12 +395,160 @@ def test_harness_end_to_end():
     return rep
 
 
+# ========================================================= 6. dependencia
+def _fila(a, b, sa, sb, score, same):
+    return {"img_a": a, "img_b": b, "sha256_a": sa, "sha256_b": sb,
+            "score": f"{score:.6f}", "same_person": str(same)}
+
+
+def test_dependencia():
+    print("\n[6] dependencia — identidades, reuso y fragilidad")
+
+    # yo{a,b,c}  fam{x,y}  otra1{z}  otra2{w}
+    match = [
+        _fila("yo/a.jpg", "yo/b.jpg", "s_a", "s_b", 0.90, True),
+        _fila("yo/a.jpg", "yo/c.jpg", "s_a", "s_c", 0.80, True),
+        _fila("fam/x.jpg", "fam/y.jpg", "s_x", "s_y", 0.85, True),
+    ]
+    nonmatch = [
+        _fila("yo/a.jpg", "fam/x.jpg", "s_a", "s_x", 0.40, False),
+        _fila("yo/b.jpg", "fam/y.jpg", "s_b", "s_y", 0.30, False),
+        _fila("yo/a.jpg", "otra1/z.jpg", "s_a", "s_z", 0.05, False),
+        _fila("fam/x.jpg", "otra1/z.jpg", "s_x", "s_z", 0.10, False),
+        _fila("otra1/z.jpg", "otra2/w.jpg", "s_z", "s_w", 0.02, False),
+        _fila("yo/a.jpg", "otra2/w.jpg", "s_a", "s_w", 0.03, False),
+    ]
+
+    est = estructura(match, nonmatch)
+    check(est["n_pares"] == 9, "cuenta los 9 pares")
+    check(est["n_imagenes"] == 7, "cuenta las 7 fotos distintas")
+    check(est["n_identidades"] == 4,
+          f"deduce 4 personas de los pares match (dio {est['n_identidades']})")
+    check(sorted(len(v) for v in est["grupos"].values()) == [1, 1, 2, 3],
+          "agrupa las fotos por persona: 3+2+1+1")
+
+    # yo/a participa en 5 pares: (a,b) (a,c) (a,x) (a,z) (a,w)
+    check(est["reuso_max"] == 5, f"la foto mas usada aparece en 5 pares (dio {est['reuso_max']})")
+    check("a.jpg" in est["img_mas_usada"], "identifica CUAL es la foto mas usada")
+    check(casi(est["reuso_medio"], 2 * 9 / 7, 1e-6), "reuso medio = 2*pares/fotos")
+    check(est["contradicciones"] == [], "sin contradicciones en un set bien etiquetado")
+
+    # Etiquetado contradictorio: dice 'distintas' pero los match las unen.
+    mal = nonmatch + [_fila("yo/a.jpg", "yo/c.jpg", "s_a", "s_c", 0.2, False)]
+    est_mal = estructura(match, mal)
+    check(len(est_mal["contradicciones"]) == 1,
+          "detecta el par que se contradice con el propio etiquetado")
+
+    jk = jackknife_por_persona(match, nonmatch, est)
+    check(len(jk) == 4, "hace jackknife una vez por persona")
+    check([j["persona"] for j in jk][:2] == ["yo", "fam"],
+          "nombra a la persona por su carpeta, empezando por la que tiene mas fotos")
+    check(jk[0]["n_fotos"] == 3 and jk[0]["pares_excluidos"] == 6,
+          "quitar 'yo' saca sus 3 fotos y los 6 pares que la tocan")
+    por_persona = {j["persona"]: j["threshold"] for j in jk}
+    check(all(v is not None for v in por_persona.values()),
+          "las 4 corridas dejan pares de ambas clases")
+
+    # El umbral de FMR=0 cae en el PUNTO MEDIO entre el non-match mas alto y el
+    # match mas bajo que sobreviven: es el de maximo margen. Se verifica a mano.
+    #   sin 'yo'     -> match {0.85}            nm {0.10, 0.02} -> (0.10+0.85)/2
+    #   sin 'fam'    -> match {0.90, 0.80}      nm {0.05,0.03,0.02} -> (0.05+0.80)/2
+    #   sin 'otra1'  -> match {0.90,0.80,0.85}  nm {0.40,0.30,0.03} -> (0.40+0.80)/2
+    #   sin 'otra2'  -> match {0.90,0.80,0.85}  nm {0.40,0.30,0.05} -> (0.40+0.80)/2
+    esperados = {"yo": 0.475, "fam": 0.425, "otra1": 0.600, "otra2": 0.600}
+    for persona, esperado in esperados.items():
+        check(casi(por_persona[persona], esperado, 1e-6),
+              f"sin '{persona}' el umbral es el punto medio {esperado:.3f} "
+              f"(dio {por_persona[persona]:.4f})")
+
+    ths = list(por_persona.values())
+    check(casi(max(ths) - min(ths), 0.175, 1e-6),
+          "el umbral se mueve 0.175 segun a quien saques: el set es fragil")
+    check(max(ths) - min(ths) > 0.05,
+          "ese rango dispara el aviso de fragilidad del reporte")
+
+
+# ======================================================= 7. init-manifest
+def test_init_manifest():
+    print("\n[7] init-manifest — carpetas -> manifiesto")
+    import json
+
+    d = TMP / "init"
+    plan = {"p1": 3, "p2": 2, "p3": 1}
+    for persona, n in plan.items():
+        for i in range(1, n + 1):
+            escribir_img(d / "data" / persona / f"{i:02d}_foto.jpg", 1)
+    (d / "data" / "vacia").mkdir(parents=True, exist_ok=True)   # sin imagenes
+    (d / "data" / "suelta.jpg").write_bytes(b"x")               # archivo suelto
+
+    salida = d / "manifests" / "ancla.json"
+    r = init_manifest(d / "data", salida, verbose=False)
+    check(r["n_personas"] == 3, "una carpeta = una persona; ignora carpetas vacias")
+    check(r["n_fotos"] == 6, "ignora los archivos sueltos fuera de las carpetas")
+    # ancla: match = (3-1)+(2-1)+(1-1) = 3 ; non-match = C(3,2) = 3
+    check(r["match"] == 3 and r["nonmatch"] == 3,
+          f"modo ancla da 3 match y 3 non-match (dio {r['match']}/{r['nonmatch']})")
+    check(r["sin_pares_match"] == ["p3"], "avisa que p3 tiene 1 sola foto")
+
+    pares = json.loads(salida.read_text(encoding="utf-8"))
+    check(len(pares) == 6, "el JSON tiene los 6 pares")
+    check(all("/" in p["img_a"] and "\\" not in p["img_a"] for p in pares),
+          "las rutas usan '/' para servir igual en Windows y Linux")
+    check(all(p["img_a"].startswith("../data/") for p in pares),
+          "las rutas son relativas al manifiesto, no absolutas")
+    check(all(p["notes"] for p in pares), "cada par sale con una nota pre-llenada")
+
+    def carpeta(ruta):
+        return ruta.split("/")[-2]
+
+    check(all(carpeta(p["img_a"]) == carpeta(p["img_b"]) for p in pares if p["same_person"]),
+          "same_person=True solo entre fotos de la MISMA carpeta")
+    check(all(carpeta(p["img_a"]) != carpeta(p["img_b"]) for p in pares if not p["same_person"]),
+          "same_person=False solo entre carpetas DISTINTAS")
+
+    # El manifiesto generado debe ser consumible por el harness sin editarlo.
+    cargados = cargar_manifiesto(salida)
+    check(len(cargados) == 6, "el harness puede leer el manifiesto generado tal cual")
+    check(all(c["img_a"].is_file() for c in cargados),
+          "las rutas relativas resuelven a archivos que existen")
+
+    r2 = init_manifest(d / "data", d / "manifests" / "todos.json",
+                       modo="todos", verbose=False)
+    # todos: match = C(3,2)+C(2,2)+0 = 4 ; non-match = 3*2+3*1+2*1 = 11
+    check(r2["match"] == 4 and r2["nonmatch"] == 11,
+          f"modo todos da 4 match y 11 non-match (dio {r2['match']}/{r2['nonmatch']})")
+    check(r2["pares"] > r["pares"],
+          "modo todos produce mas pares de las MISMAS fotos (de ahi el aviso)")
+
+    try:
+        init_manifest(d / "no_existe", d / "x.json", verbose=False)
+        check(False, "un directorio inexistente debe lanzar ManifestError")
+    except ManifestError:
+        check(True, "directorio inexistente lanza ManifestError")
+
+    vacio = d / "sin_nada"
+    vacio.mkdir(parents=True, exist_ok=True)
+    try:
+        init_manifest(vacio, d / "y.json", verbose=False)
+        check(False, "un directorio sin personas debe lanzar ManifestError")
+    except ManifestError:
+        check(True, "directorio sin subcarpetas con imagenes lanza ManifestError")
+
+    try:
+        init_manifest(d / "data", d / "z.json", modo="inventado", verbose=False)
+        check(False, "un modo invalido debe lanzar")
+    except ManifestError:
+        check(True, "modo invalido lanza ManifestError")
+
+
 def main() -> int:
     print(f"Directorio temporal: {TMP}")
     test_compare()
     test_extract()
     test_store()
     test_calibracion_exacta()
+    test_dependencia()
+    test_init_manifest()
     test_harness_end_to_end()
 
     print("\n" + "=" * 60)

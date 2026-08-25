@@ -10,7 +10,9 @@ Por eso agregar pares nuevos a un manifiesto no reprocesa las imagenes viejas.
 from __future__ import annotations
 
 import csv
+import itertools
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -217,4 +219,142 @@ def run_manifest(manifest_path: str | Path, runtime, csv_out: str | Path, *,
         if resumen["pares_descartados"]:
             print(f"[facid] OJO: {resumen['pares_descartados']} pares sin score "
                   "(revisa error_a / error_b en el CSV)")
+    return resumen
+
+
+# ---------------------------------------------------------------------------
+# Generacion del manifiesto a partir de la estructura de carpetas
+# ---------------------------------------------------------------------------
+EXTENSIONES = (".jpg", ".jpeg", ".png", ".bmp", ".webp")
+
+MODO_ANCLA = "ancla"
+MODO_TODOS = "todos"
+
+
+def descubrir_personas(data_dir: str | Path) -> dict[str, list[Path]]:
+    """Una subcarpeta de `data_dir` = una persona. Ignora archivos sueltos.
+
+    Es la regla que hace util la organizacion en carpetas: la identidad la da
+    la carpeta, no el nombre del archivo. Ordenado alfabeticamente para que
+    correr esto dos veces produzca el mismo manifiesto.
+    """
+    raiz = Path(data_dir)
+    if not raiz.is_dir():
+        raise ManifestError(f"No es un directorio: {raiz}")
+
+    personas: dict[str, list[Path]] = {}
+    for sub in sorted(p for p in raiz.iterdir() if p.is_dir()):
+        fotos = sorted(f for f in sub.iterdir()
+                       if f.is_file() and f.suffix.lower() in EXTENSIONES)
+        if fotos:
+            personas[sub.name] = fotos
+    return personas
+
+
+def _nota_de(path: Path) -> str:
+    """Deriva una nota legible del nombre del archivo: '03_luz_distinta' -> 'luz distinta'."""
+    stem = path.stem
+    partes = stem.split("_")
+    if partes and partes[0].isdigit():
+        partes = partes[1:]
+    return " ".join(partes) if partes else stem
+
+
+def init_manifest(data_dir: str | Path, salida: str | Path, *,
+                  modo: str = MODO_ANCLA, verbose: bool = True) -> dict[str, Any]:
+    """Escribe un manifiesto deduciendo las etiquetas de las carpetas.
+
+    misma carpeta  -> same_person: true
+    carpeta distinta -> same_person: false
+
+    modo 'ancla' (default): dentro de cada persona, la primera foto es el ancla
+        y se compara contra las demas; los non-match son las anclas entre si.
+        Es el diseno del handoff: pocos pares, dependencia acotada.
+    modo 'todos': todas las combinaciones posibles. Da muchos mas pares SIN
+        agregar informacion nueva (salen de las mismas fotos), asi que estrecha
+        los intervalos de confianza sin justificarlo. Usalo para explorar, no
+        para reportar un threshold.
+    """
+    if modo not in (MODO_ANCLA, MODO_TODOS):
+        raise ManifestError(f"modo invalido: {modo!r} (usa '{MODO_ANCLA}' o '{MODO_TODOS}')")
+
+    personas = descubrir_personas(data_dir)
+    if not personas:
+        raise ManifestError(
+            f"No encontre ninguna subcarpeta con imagenes en {data_dir}. "
+            f"Esperaba algo como {data_dir}/<persona>/foto.jpg "
+            f"(extensiones: {', '.join(EXTENSIONES)})")
+
+    salida_path = Path(salida)
+    base = salida_path.parent.resolve()
+
+    def rel(p: Path) -> str:
+        # Las rutas del manifiesto se resuelven relativas al propio manifiesto;
+        # se fuerzan a '/' para que el archivo sirva igual en Windows y Linux.
+        try:
+            return os.path.relpath(p.resolve(), base).replace(os.sep, "/")
+        except ValueError:
+            return p.resolve().as_posix()
+
+    pares: list[dict[str, Any]] = []
+
+    # --- match: dentro de cada persona ---
+    for nombre, fotos in personas.items():
+        if modo == MODO_ANCLA:
+            ancla = fotos[0]
+            combos = [(ancla, f) for f in fotos[1:]]
+        else:
+            combos = list(itertools.combinations(fotos, 2))
+        for a, b in combos:
+            pares.append({"img_a": rel(a), "img_b": rel(b), "same_person": True,
+                          "notes": _nota_de(b) if modo == MODO_ANCLA
+                          else f"{_nota_de(a)} vs {_nota_de(b)}"})
+
+    # --- non-match: entre personas distintas ---
+    for (na, fa), (nb, fb) in itertools.combinations(personas.items(), 2):
+        if modo == MODO_ANCLA:
+            combos = [(fa[0], fb[0])]
+        else:
+            combos = [(a, b) for a in fa for b in fb]
+        for a, b in combos:
+            pares.append({"img_a": rel(a), "img_b": rel(b), "same_person": False,
+                          "notes": f"{na} vs {nb} — ¿se parecen?"})
+
+    salida_path.parent.mkdir(parents=True, exist_ok=True)
+    salida_path.write_text(json.dumps(pares, indent=2, ensure_ascii=False) + "\n",
+                           encoding="utf-8")
+
+    n_match = sum(1 for p in pares if p["same_person"])
+    resumen = {
+        "salida": str(salida_path), "modo": modo,
+        "personas": {k: len(v) for k, v in personas.items()},
+        "n_personas": len(personas), "n_fotos": sum(len(v) for v in personas.values()),
+        "pares": len(pares), "match": n_match, "nonmatch": len(pares) - n_match,
+        "sin_pares_match": [k for k, v in personas.items() if len(v) < 2],
+    }
+
+    if verbose:
+        print(f"[facid] {resumen['n_personas']} personas, {resumen['n_fotos']} fotos")
+        for k, v in resumen["personas"].items():
+            print(f"          {k:<16} {v} foto(s)")
+        print(f"[facid] modo '{modo}': {len(pares)} pares "
+              f"({n_match} match, {len(pares) - n_match} non-match)")
+        print(f"[facid] escrito {salida_path}")
+        if resumen["sin_pares_match"]:
+            print(f"[facid] sin pares match (1 sola foto): "
+                  f"{', '.join(resumen['sin_pares_match'])}")
+        if len(personas) < 2:
+            print("[facid] OJO: con una sola persona no hay pares non-match y no se")
+            print("        puede calibrar nada. Necesitas al menos dos personas.")
+        n_nm = len(pares) - n_match
+        if n_nm:
+            print()
+            print(f"[facid] Con {n_nm} pares non-match, la FMR mas chica que vas a poder")
+            print(f"        MEDIR es 1/{n_nm} = {1/n_nm:.0%}. Si necesitas resolucion mas fina,")
+            print(f"        lo que hace falta son mas PERSONAS, no mas pares: agregar pares")
+            print(f"        sacados de estas mismas {len(personas)} fotos-personas estrecha los")
+            print("        intervalos sin agregar informacion (--modo todos hace justo eso).")
+        print()
+        print("Ahora abre el archivo y corrige las notas: son lo unico que despues")
+        print("te va a explicar por que un par salio con score bajo.")
     return resumen

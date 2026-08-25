@@ -347,6 +347,31 @@ def calibrar(csv_path: str | Path, out_dir: str | Path, *,
 
     dm, dn = describir(m), describir(nm)
 
+    # -------- Composicion del set: cuantas observaciones REALES hay --------
+    from .dependencia import estructura, jackknife_por_persona
+    est = estructura(datos["filas_match"], datos["filas_nonmatch"])
+
+    add("\n0) COMPOSICION DEL SET")
+    add(f"   {est['n_pares']} pares construidos sobre {est['n_imagenes']} fotos "
+        f"de {est['n_identidades']} personas distintas.")
+    add(f"   Cada foto participa en {est['reuso_medio']:.1f} pares en promedio; "
+        f"la mas usada aparece en {est['reuso_max']}")
+    add(f"   ({est['img_mas_usada']}).")
+    if est["reuso_max"] > 1:
+        add("   Los pares NO son observaciones independientes: comparten fotos. Si esa")
+        add("   foto salio mal, no arrastra un par, arrastra todos los suyos. Por eso los")
+        add("   intervalos de mas abajo son OPTIMISTAS — el real es mas ancho. Trata el")
+        add(f"   numero de personas ({est['n_identidades']}) como el tamano de muestra que manda,")
+        add(f"   no el de pares ({est['n_pares']}); ver la seccion de FRAGILIDAD.")
+    if est["contradicciones"]:
+        add("")
+        add(f"   [!] {len(est['contradicciones'])} pares se contradicen con tu etiquetado:")
+        for a, b in est["contradicciones"][:5]:
+            add(f"       {a} vs {b} -> marcado same_person=false, pero tus pares")
+            add("       match conectan esas dos fotos como la MISMA persona.")
+        add("       Es un error de captura en el manifiesto. Arreglalo antes de creerle")
+        add("       a cualquier numero de este reporte.")
+
     # -------- Preguntas 1 y 2 del criterio de aceptacion --------
     add("\n1) MISMA PERSONA (match)")
     add(f"   n={dm['n']}   rango [{dm['min']:.4f} .. {dm['max']:.4f}]")
@@ -424,6 +449,42 @@ def calibrar(csv_path: str | Path, out_dir: str | Path, *,
     add("       de FMR observada 0, pero con este N la unica afirmacion defendible")
     add("       es la cota superior del intervalo, no el 0.")
 
+    # -------- Fragilidad: cuanto decide UNA sola persona --------
+    jk = jackknife_por_persona(datos["filas_match"], datos["filas_nonmatch"], est)
+    validos = [j for j in jk if j["threshold"] is not None]
+    add("\n   FRAGILIDAD — quitar una persona completa y recalcular")
+    add("   (el threshold de FMR observada 0; es lo que un IC no te dice cuando")
+    add("    los pares comparten fotos)")
+    add("")
+    add("   persona quitada        fotos  pares fuera   threshold      FMR     FNMR")
+    add("   " + "-" * 72)
+    for j in jk:
+        if j["threshold"] is None:
+            add(f"   {j['persona'][:20]:<20}   {j['n_fotos']:>5}  {j['pares_excluidos']:>11}"
+                f"   {'sin datos suficientes':>28}")
+            continue
+        add(f"   {j['persona'][:20]:<20}   {j['n_fotos']:>5}  {j['pares_excluidos']:>11}"
+            f"   {j['threshold']:>9.4f}  {_pct(j['fmr'])}  {_pct(j['fnmr'])}")
+
+    if len(validos) >= 2:
+        ths = [j["threshold"] for j in validos]
+        rango = max(ths) - min(ths)
+        add("")
+        add(f"   El threshold se mueve entre {min(ths):.4f} y {max(ths):.4f} "
+            f"(rango {rango:.4f}) segun")
+        add("   a quien saques del set.")
+        if rango > 0.05:
+            add(f"   [!] Ese rango ({rango:.3f}) es grande: el resultado lo esta decidiendo")
+            add("       una persona en particular, no tu sistema. Con mas personas se")
+            add("       encogeria; con estas, el threshold no es transferible.")
+        else:
+            add("   El rango es chico: ninguna persona sola domina el resultado, lo cual")
+            add("   da algo de confianza — pero sigue siendo un set de pocas personas.")
+    elif validos:
+        add("")
+        add("   [!] Al quitar cualquier persona no quedan pares de ambas clases: el set")
+        add("       tiene tan pocas personas que no se puede medir su propia fragilidad.")
+
     # -------- Barrido completo --------
     tabla = barrido(m, nm, 0.0, 1.0, paso)
     sweep_csv = out / "sweep_fmr_fnmr.csv"
@@ -464,4 +525,8 @@ def calibrar(csv_path: str | Path, out_dir: str | Path, *,
         "eer": e, "puntos_operacion": filas_op,
         "sweep_csv": str(sweep_csv), "histograma": str(png) if png else None,
         "descartados": len(datos["descartados"]),
+        "composicion": {k: v for k, v in est.items()
+                        if k not in ("identidad_por_imagen", "grupos", "pares",
+                                     "etiquetas", "uso")},
+        "fragilidad": jk,
     }

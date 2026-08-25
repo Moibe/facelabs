@@ -192,6 +192,18 @@ def cmd_run_manifest(args) -> int:
     return 0
 
 
+# -------------------------------------------------------------- init-manifest
+def cmd_init_manifest(args) -> int:
+    # Tampoco carga el modelo: solo lee nombres de carpetas y archivos.
+    from .harness import ManifestError, init_manifest
+    try:
+        init_manifest(args.data_dir, args.out, modo=args.modo, verbose=True)
+    except ManifestError as e:
+        print(f"[X] {e}", file=sys.stderr)
+        return 2
+    return 0
+
+
 # ------------------------------------------------------------------ calibrate
 def cmd_calibrate(args) -> int:
     # Sin imports del modelo: esto corre en cualquier maquina.
@@ -229,6 +241,20 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--threshold", type=float, default=None,
                    help="Opcional: aplica decide() y muestra el veredicto.")
     c.set_defaults(func=cmd_compare)
+
+    i = sub.add_parser(
+        "init-manifest",
+        help="Genera el manifiesto desde data/: misma carpeta = misma persona.")
+    i.add_argument("data_dir", nargs="?", default="data",
+                   help="Carpeta con una subcarpeta por persona (default: %(default)s).")
+    i.add_argument("-o", "--out", default="manifests/mi_set.json")
+    i.add_argument("--modo", choices=("ancla", "todos"), default="ancla",
+                   help="'ancla': cada foto contra la primera de su persona, y las "
+                        "anclas entre si (pocos pares, dependencia acotada). "
+                        "'todos': todas las combinaciones — mas pares pero salidos "
+                        "de las mismas fotos, asi que estrechan los intervalos sin "
+                        "justificarlo. Default: %(default)s.")
+    i.set_defaults(func=cmd_init_manifest)
 
     r = sub.add_parser("run-manifest", help="Corre un manifiesto de pares -> CSV.")
     r.add_argument("manifest")

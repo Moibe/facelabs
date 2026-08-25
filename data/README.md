@@ -60,9 +60,19 @@ puedes defender sale de aquí.
 
 ## Cómo escribir el manifiesto
 
-Copia `manifests/ejemplo.json` y edítalo. Las rutas se resuelven **relativas al
-propio archivo de manifiesto**, así que desde `manifests/` se escribe
-`../data/ana/ana_01.jpg`.
+No lo escribas a mano. Una vez que las fotos estén en sus carpetas:
+
+```bash
+python -m facid init-manifest data -o manifests/mi_set.json
+```
+
+Deduce las etiquetas de las carpetas (misma carpeta = misma persona) y te dice
+de una vez qué resolución de FMR acabas de comprar con ese número de pares.
+Luego abre el archivo y corrige las notas.
+
+Si prefieres hacerlo a mano, copia `manifests/ejemplo.json`. Las rutas se
+resuelven **relativas al propio archivo de manifiesto**, así que desde
+`manifests/` se escribe `../data/yo/01_ancla.jpg`.
 
 ```json
 {"img_a": "...", "img_b": "...", "same_person": true, "notes": "por qué es difícil"}

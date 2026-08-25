@@ -54,12 +54,30 @@ de creer que estás usando la GPU.
 facid() { python -m facid "$@"; }   # o usa `python -m facid ...` directo
 
 facid doctor                                    # entorno, provider activo, hashes
-facid extract data/ana/*.jpg                    # extrae y persiste embeddings
-facid compare data/ana/ana_01.jpg data/ana/ana_02.jpg   # score crudo
+facid extract data/yo/*.jpg                     # extrae y persiste embeddings
+facid compare data/yo/01_ancla.jpg data/yo/03_luz_distinta.jpg   # score crudo
 
+facid init-manifest data -o manifests/mi_set.json   # genera el manifiesto
 facid run-manifest manifests/mi_set.json -o out/scores.csv
 facid calibrate out/scores.csv
 ```
+
+`init-manifest` deduce las etiquetas de la estructura de carpetas: **misma
+carpeta = misma persona, carpeta distinta = personas distintas**. Es el paso más
+propenso a errores hecho a mano — un `same_person` equivocado envenena la
+calibración y nada te avisa. Genera el archivo con las notas pre-llenadas a
+partir de los nombres de archivo; tú las corriges.
+
+Dos modos:
+
+| Modo | Qué pares genera | Cuándo |
+|---|---|---|
+| `ancla` (default) | Cada foto contra la primera de su persona; las anclas entre sí | Reportar un threshold |
+| `todos` | Todas las combinaciones posibles | Explorar |
+
+`todos` da muchos más pares pero salidos de **las mismas fotos**, así que
+estrecha los intervalos de confianza sin agregar información. Ver la sección
+siguiente.
 
 `calibrate` **no carga el modelo**: trabaja sobre el CSV. Puedes extraer en la
 máquina con GPU y analizar en cualquier otra, incluso sin insightface instalado.
@@ -85,8 +103,9 @@ reprocesar una sola imagen.
 | [`facid/store.py`](facid/store.py) | `.npy` + índice SQLite con metadata de reproducibilidad. |
 | [`facid/compare.py`](facid/compare.py) | `compare(a, b) -> float`. Score crudo. **No sabe qué es un threshold.** |
 | [`facid/decide.py`](facid/decide.py) | La única capa que conoce un umbral, y lo recibe como parámetro. |
-| [`facid/harness.py`](facid/harness.py) | Manifiesto de pares -> CSV de scores. |
+| [`facid/harness.py`](facid/harness.py) | Manifiesto de pares -> CSV de scores, y generación del manifiesto desde `data/`. |
 | [`facid/calibrate.py`](facid/calibrate.py) | FMR/FNMR, traslape, EER, puntos de operación, histograma. |
+| [`facid/dependencia.py`](facid/dependencia.py) | Mide qué tan dependientes son los pares entre sí y qué tan frágil es el resultado. |
 
 Ningún threshold está hardcodeado en ninguna función de comparación. El umbral
 es el **resultado** del experimento, no una constante del código.
@@ -143,6 +162,35 @@ Consecuencia concreta: **0 falsas aceptaciones en 7 pares non-match no es
 todo objetivo más fino que la resolución del set (con `n` pares non-match, la
 FMR no-nula más chica medible es `1/n`) para que no confundas "no observé
 errores" con "no hay errores".
+
+### Los pares no son independientes, y eso importa
+
+Clopper-Pearson asume que cada par es una observación independiente. **En un set
+de verificación facial eso es falso**: los pares se construyen combinando un
+puñado de fotos, y la foto ancla suele aparecer en casi todos los pares match de
+su persona. Si esa foto salió mal, no arrastra un par: arrastra todos los suyos,
+juntos.
+
+Por eso los intervalos que imprime el reporte son **optimistas** — el verdadero
+es más ancho. Con 3-4 personas no hay forma honesta de corregirlo, así que en
+lugar de fingir precisión el reporte hace dos cosas:
+
+- **Sección 0 — composición del set.** Cuántos pares sobre cuántas fotos de
+  cuántas personas, y en cuántos pares participa la foto más reusada. Las
+  identidades se deducen de los propios pares match por transitividad, así que
+  también detecta **contradicciones de etiquetado**: un par marcado
+  `same_person: false` entre dos fotos que tus pares match conectan como la
+  misma persona es un error de captura, y te lo dice.
+- **Sección de fragilidad — jackknife por persona.** Quita a una persona
+  completa, recalcula el threshold, y repite con cada una. Si el threshold se
+  mueve mucho, el número no describe tu sistema: describe a esa persona. Es lo
+  que un intervalo de confianza no te puede decir cuando los pares están
+  correlacionados.
+
+La conclusión práctica: para afirmar algo más fino, lo que hace falta son más
+**personas**, no más pares. Agregar pares sacados de las mismas fotos angosta
+los intervalos sin agregar evidencia — es exactamente lo que hace
+`--modo todos`, y por eso no es el default.
 
 Convención, idéntica en `decide.py` y en `calibrate.py`:
 
