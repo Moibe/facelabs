@@ -1,0 +1,12 @@
+# Este repo se AUTORA en Windows y se EJECUTA en Linux. Los finales de linea
+# se normalizan a LF siempre. Sin esto, un clone hecho desde una maquina con
+# core.autocrlf=true puede dejar setup.sh con CRLF, y Ubuntu responde:
+#     bash: ./setup.sh: /usr/bin/env bash^M: bad interpreter
+* text=auto eol=lf
+
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.npy   binary
+*.onnx  binary
+*.sqlite binary
