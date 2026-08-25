@@ -25,10 +25,16 @@ def _clave_img(fila: dict, lado: str) -> str:
     """Identidad canonica de una imagen dentro del CSV.
 
     Prefiere el sha256 (dos rutas distintas al mismo archivo son la MISMA foto);
-    cae a la ruta si el CSV no trae la columna (p.ej. uno escrito a mano).
+    cae a la ruta si el CSV no trae la columna, o si lo que trae no parece un
+    hash. Ese segundo caso importa: un CSV escrito a mano con la columna
+    rellenada de cualquier cosa colapsaria fotos distintas en una sola clave, y
+    el conteo de identidades saldria mal SIN avisar. Mejor ignorar un sha dudoso
+    y usar la ruta, que al menos distingue archivos.
     """
-    sha = (fila.get(f"sha256_{lado}") or "").strip()
-    return sha if sha else (fila.get(f"img_{lado}") or "").strip()
+    sha = (fila.get(f"sha256_{lado}") or "").strip().lower()
+    if len(sha) >= 8 and all(c in "0123456789abcdef" for c in sha):
+        return sha
+    return (fila.get(f"img_{lado}") or "").strip()
 
 
 def _etiqueta_img(fila: dict, lado: str) -> str:

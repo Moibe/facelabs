@@ -123,6 +123,41 @@ máquina con GPU y analizar en cualquier otra, incluso sin insightface instalado
 
 ---
 
+## Tablero visual (opcional)
+
+Además de la CLI hay un front para ver los resultados —y sobre todo **las fotos
+junto a su score**, que en un CSV no se ven.
+
+```bash
+.venv/bin/python -m pip install -r api/requirements.txt   # una vez
+cd web && npm install                                     # una vez
+npm run dev                                               # levanta API + front
+```
+
+| Carpeta | Qué es |
+|---|---|
+| [`api/`](api/) | FastAPI delgado sobre `facid`. Sólo lectura salvo dos POST |
+| [`web/`](web/) | SvelteKit 5 + TS, gradiente azul rey y barras de vidrio |
+
+**La CLI no depende de nada de esto.** `api/` importa `facid`; `facid` nunca
+importa `api/`, y hay una prueba que lo verifica leyendo el código fuente de cada
+módulo. `fastapi` y `uvicorn` viven en `api/requirements.txt`, no en el de la
+raíz: puedes instalar y usar la CLI completa sin ellos.
+
+Tampoco hay logica duplicada: el API llama a las **mismas** funciones que la
+terminal. Si un número del front no cuadra con el de la CLI, es un bug de
+serialización, no dos implementaciones que se separaron.
+
+Cuatro páginas: **Panorama** (histograma + slider de threshold con FMR/FNMR
+vivos), **Pares** (las dos fotos de cada par, con filtro "sólo errores"),
+**El set** (dependencia entre pares y fragilidad por persona) y **Entorno**
+(`doctor` visual). Detalles en [`web/README.md`](web/README.md).
+
+Corre sólo en `localhost`, sin deploy ni dominio: el tablero muestra caras de
+personas que dieron consentimiento para un experimento local.
+
+---
+
 ## Arquitectura
 
 ```
@@ -145,6 +180,8 @@ reprocesar una sola imagen.
 | [`facid/harness.py`](facid/harness.py) | Manifiesto de pares -> CSV de scores, y generación del manifiesto desde `data/`. |
 | [`facid/calibrate.py`](facid/calibrate.py) | FMR/FNMR, traslape, EER, puntos de operación, histograma. |
 | [`facid/dependencia.py`](facid/dependencia.py) | Mide qué tan dependientes son los pares entre sí y qué tan frágil es el resultado. |
+| [`api/main.py`](api/main.py) | Capa HTTP para el tablero. Importa `facid`; `facid` nunca la importa. |
+| [`web/`](web/) | Tablero SvelteKit. Sólo mira: no calcula nada. |
 
 Ningún threshold está hardcodeado en ninguna función de comparación. El umbral
 es el **resultado** del experimento, no una constante del código.
@@ -247,7 +284,9 @@ contado aparte. Meterlo contaminaría la distribución con un fallo de detecció
 ## Pruebas
 
 ```bash
-python tests/test_pipeline_sin_modelo.py
+python tests/test_pipeline_sin_modelo.py   # pipeline: 118 aserciones
+python tests/test_api.py                   # API: 54 aserciones
+cd web && npm run check                    # tipos del front
 ```
 
 Sustituye el modelo por un doble de prueba y ejercita el pipeline completo

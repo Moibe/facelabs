@@ -19,3 +19,8 @@ out/*
 
 # Modelos descargados por insightface (~300 MB, licencia no comercial)
 models/
+
+# Front: dependencias y build (web/.gitignore ya los cubre; esto es cinturón)
+web/node_modules/
+web/.svelte-kit/
+web/build/

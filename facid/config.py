@@ -9,8 +9,10 @@ from .errors import FacePolicy
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-DATA_DIR = REPO_ROOT / "data"
-OUT_DIR = Path(os.environ.get("FACID_OUT", REPO_ROOT / "out"))
+# Configurables por env para poder apuntar a otro set (o a un temporal en las
+# pruebas) sin tocar el codigo ni mover fotos de lugar.
+DATA_DIR = Path(os.environ.get("FACID_DATA", REPO_ROOT / "data")).expanduser()
+OUT_DIR = Path(os.environ.get("FACID_OUT", REPO_ROOT / "out")).expanduser()
 EMBEDDINGS_DIR = OUT_DIR / "embeddings"
 INDEX_DB = OUT_DIR / "index.sqlite"
 

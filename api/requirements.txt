@@ -1,0 +1,4 @@
+# Dependencias SOLO del API. requirements.txt de la raiz NO las incluye a
+# proposito: la CLI debe poder instalarse y correr sin fastapi ni uvicorn.
+fastapi>=0.115
+uvicorn>=0.30
