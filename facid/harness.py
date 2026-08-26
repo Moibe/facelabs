@@ -14,7 +14,13 @@ import itertools
 import json
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
+
+# (actual, total, nombre_de_archivo, etapa). Se llama desde un hilo de
+# extraccion/comparacion potencialmente largo; quien lo pase debe ser rapido
+# y thread-safe (el consumidor real es el endpoint /api/corrida, que solo
+# actualiza un dict detras de un lock).
+ProgresoCB = Callable[[int, int, str, str], None]
 
 from .compare import compare
 from .config import DEFAULT_FACE_POLICY
@@ -95,9 +101,13 @@ def cargar_manifiesto(path: str | Path) -> list[dict[str, Any]]:
     return pares
 
 
-def _extraer_todas(pares, runtime, store: EmbeddingStore, face_policy: str,
-                   force: bool, verbose: bool) -> dict[str, dict[str, Any]]:
-    """Pasada 1. Devuelve {ruta_str: info}, una entrada por imagen unica."""
+def imagenes_unicas(pares: list[dict[str, Any]]) -> list[Path]:
+    """Las rutas de imagen distintas que toca un manifiesto ya cargado.
+
+    Expuesta aparte de `_extraer_todas` porque quien reporta progreso (el
+    endpoint /api/corrida) necesita el total ANTES de arrancar el hilo que
+    extrae, para no mostrar una barra en 0/0 mientras carga el modelo.
+    """
     rutas: list[Path] = []
     vistas: set[str] = set()
     for par in pares:
@@ -106,6 +116,14 @@ def _extraer_todas(pares, runtime, store: EmbeddingStore, face_policy: str,
             if s not in vistas:
                 vistas.add(s)
                 rutas.append(par[lado])
+    return rutas
+
+
+def _extraer_todas(pares, runtime, store: EmbeddingStore, face_policy: str,
+                   force: bool, verbose: bool,
+                   on_progreso: ProgresoCB | None = None) -> dict[str, dict[str, Any]]:
+    """Pasada 1. Devuelve {ruta_str: info}, una entrada por imagen unica."""
+    rutas = imagenes_unicas(pares)
 
     fp = runtime.fingerprint
     resultados: dict[str, dict[str, Any]] = {}
@@ -119,6 +137,8 @@ def _extraer_todas(pares, runtime, store: EmbeddingStore, face_policy: str,
                                  "provider": None}
             if verbose:
                 print(f"  [{k}/{len(rutas)}] FILE_NOT_FOUND  {ruta}")
+            if on_progreso:
+                on_progreso(k, len(rutas), ruta.name, "extraccion")
             continue
 
         sha = sha256_file(ruta)
@@ -138,38 +158,41 @@ def _extraer_todas(pares, runtime, store: EmbeddingStore, face_policy: str,
             }
             if verbose:
                 print(f"  [{k}/{len(rutas)}] cache          {ruta.name}")
-            continue
-
-        r = extract_embedding(ruta, runtime, face_policy=face_policy)
-        if r["error"] is None:
-            store.guardar(r, runtime, face_policy)
-            resultados[clave] = {
-                "ok": True, "error": None, "sha256": r["image_sha256"],
-                "embedding": r["embedding"], "det_score": r["det_score"],
-                "n_faces": r["n_faces_detected"],
-                "face_selection": r["face_selection"],
-                "provider": runtime.provider_activo,
-            }
-            if verbose:
-                print(f"  [{k}/{len(rutas)}] ok det={r['det_score']:.3f}  {ruta.name}")
         else:
-            store.registrar_fallo(r, runtime, face_policy)
-            resultados[clave] = {
-                "ok": False, "error": r["error"], "sha256": r["image_sha256"],
-                "det_score": r["det_score"], "n_faces": r["n_faces_detected"],
-                "face_selection": r["face_selection"],
-                "provider": runtime.provider_activo,
-            }
-            if verbose:
-                print(f"  [{k}/{len(rutas)}] {r['error']}  {ruta.name}"
-                      f"  (rostros={r['n_faces_detected']})")
+            r = extract_embedding(ruta, runtime, face_policy=face_policy)
+            if r["error"] is None:
+                store.guardar(r, runtime, face_policy)
+                resultados[clave] = {
+                    "ok": True, "error": None, "sha256": r["image_sha256"],
+                    "embedding": r["embedding"], "det_score": r["det_score"],
+                    "n_faces": r["n_faces_detected"],
+                    "face_selection": r["face_selection"],
+                    "provider": runtime.provider_activo,
+                }
+                if verbose:
+                    print(f"  [{k}/{len(rutas)}] ok det={r['det_score']:.3f}  {ruta.name}")
+            else:
+                store.registrar_fallo(r, runtime, face_policy)
+                resultados[clave] = {
+                    "ok": False, "error": r["error"], "sha256": r["image_sha256"],
+                    "det_score": r["det_score"], "n_faces": r["n_faces_detected"],
+                    "face_selection": r["face_selection"],
+                    "provider": runtime.provider_activo,
+                }
+                if verbose:
+                    print(f"  [{k}/{len(rutas)}] {r['error']}  {ruta.name}"
+                          f"  (rostros={r['n_faces_detected']})")
+
+        if on_progreso:
+            on_progreso(k, len(rutas), ruta.name, "extraccion")
 
     return resultados
 
 
 def run_manifest(manifest_path: str | Path, runtime, csv_out: str | Path, *,
                  face_policy: str = DEFAULT_FACE_POLICY, force: bool = False,
-                 verbose: bool = True) -> dict[str, Any]:
+                 verbose: bool = True,
+                 on_progreso: ProgresoCB | None = None) -> dict[str, Any]:
     """Corre el manifiesto completo y escribe el CSV. Devuelve un resumen."""
     pares = cargar_manifiesto(manifest_path)
     store = EmbeddingStore()
@@ -178,10 +201,17 @@ def run_manifest(manifest_path: str | Path, runtime, csv_out: str | Path, *,
         print(f"[facid] manifiesto: {len(pares)} pares")
         print("[facid] pasada 1/2 — extraccion de embeddings")
 
-    extraidos = _extraer_todas(pares, runtime, store, face_policy, force, verbose)
+    extraidos = _extraer_todas(pares, runtime, store, face_policy, force, verbose,
+                               on_progreso=on_progreso)
 
     if verbose:
         print("[facid] pasada 2/2 — comparacion de pares")
+    if on_progreso:
+        # La comparacion es coseno entre vectores ya extraidos: incluso miles
+        # de pares se resuelven en el orden de un segundo, asi que no amerita
+        # progreso por par. Un solo aviso de cambio de etapa alcanza para que
+        # la barra no se vea "atorada" en el ultimo % de la extraccion.
+        on_progreso(len(pares), len(pares), "", "comparacion")
 
     filas: list[dict[str, Any]] = []
     n_ok = 0

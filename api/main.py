@@ -17,6 +17,7 @@ consentimiento para un experimento, no para exponer un puerto.
 from __future__ import annotations
 
 import sys
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -34,7 +35,8 @@ from facid import calibrate as cal                          # noqa: E402
 from facid.config import DATA_DIR, OUT_DIR                   # noqa: E402
 from facid.dependencia import estructura, jackknife_por_persona  # noqa: E402
 from facid.harness import (                                 # noqa: E402
-    ManifestError, descubrir_personas, init_manifest,
+    ManifestError, cargar_manifiesto, descubrir_personas, imagenes_unicas,
+    init_manifest,
 )
 
 app = FastAPI(
@@ -385,22 +387,77 @@ class PeticionCorrida(BaseModel):
     force: bool = False
 
 
+# La corrida real (cargar ~300 MB de ONNX y extraer cada foto) puede tardar
+# minutos con sets grandes, y un solo POST bloqueante no tiene forma de avisar
+# progreso mientras tanto. Se lanza en un hilo aparte; este dict, detras de un
+# lock, es el unico canal entre ese hilo y los GET que preguntan como va. Un
+# dict global alcanza porque el uso real es UN usuario local corriendo UNA
+# cosa a la vez, no una cola de trabajos concurrentes.
+_corrida_lock = threading.Lock()
+_corrida_estado: dict[str, Any] = {
+    "en_curso": False,
+    "etapa": "",  # "cargando_modelo" | "extraccion" | "comparacion" | ""
+    "actual": 0,
+    "total": 0,
+    "archivo": "",
+    "resultado": None,
+    "error": None,
+}
+
+
 @app.post("/api/corrida")
 def correr(p: PeticionCorrida) -> dict[str, Any]:
-    """Extrae y compara. Es lo unico que carga el modelo y puede tardar."""
+    """Arranca la corrida en segundo plano. Sondea /api/corrida/estado para el avance."""
+    with _corrida_lock:
+        if _corrida_estado["en_curso"]:
+            raise HTTPException(409, "Ya hay una corrida en curso.")
+
     manifiesto = _dentro(REPO / "manifests", p.manifiesto)
     csv_out = _dentro(OUT_DIR, p.salida_csv)
     if not manifiesto.is_file():
         raise HTTPException(404, f"no existe el manifiesto: {p.manifiesto}")
     try:
-        from facid.harness import run_manifest
-        from facid.runtime import load_runtime
-        rt = load_runtime(device=p.device,
-                          require_gpu=False if p.allow_cpu_fallback else None,
-                          verbose=False)
-        return run_manifest(manifiesto, rt, csv_out, face_policy=p.face_policy,
-                            force=p.force, verbose=False)
+        pares = cargar_manifiesto(manifiesto)
     except ManifestError as exc:
         raise HTTPException(400, str(exc)) from exc
-    except Exception as exc:
-        raise HTTPException(500, f"{type(exc).__name__}: {exc}") from exc
+
+    with _corrida_lock:
+        _corrida_estado.update({
+            "en_curso": True, "etapa": "cargando_modelo",
+            "actual": 0, "total": len(imagenes_unicas(pares)),
+            "archivo": "", "resultado": None, "error": None,
+        })
+
+    def _reportar(actual: int, total: int, archivo: str, etapa: str) -> None:
+        with _corrida_lock:
+            _corrida_estado.update(
+                {"etapa": etapa, "actual": actual, "total": total, "archivo": archivo})
+
+    def _trabajo() -> None:
+        try:
+            from facid.harness import run_manifest
+            from facid.runtime import load_runtime
+            rt = load_runtime(device=p.device,
+                              require_gpu=False if p.allow_cpu_fallback else None,
+                              verbose=False)
+            resultado = run_manifest(manifiesto, rt, csv_out, face_policy=p.face_policy,
+                                     force=p.force, verbose=False, on_progreso=_reportar)
+            with _corrida_lock:
+                _corrida_estado["resultado"] = resultado
+        except Exception as exc:
+            with _corrida_lock:
+                _corrida_estado["error"] = f"{type(exc).__name__}: {exc}"
+        finally:
+            with _corrida_lock:
+                _corrida_estado["en_curso"] = False
+
+    threading.Thread(target=_trabajo, daemon=True).start()
+    with _corrida_lock:
+        return dict(_corrida_estado)
+
+
+@app.get("/api/corrida/estado")
+def corrida_estado() -> dict[str, Any]:
+    """Lo que el front sondea para pintar la barra de progreso."""
+    with _corrida_lock:
+        return dict(_corrida_estado)

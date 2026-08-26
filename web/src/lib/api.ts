@@ -205,6 +205,16 @@ export type Personas = {
 	}[];
 };
 
+export type CorridaEstado = {
+	en_curso: boolean;
+	etapa: 'cargando_modelo' | 'extraccion' | 'comparacion' | '';
+	actual: number;
+	total: number;
+	archivo: string;
+	resultado: { pares_total: number; pares_ok: number; csv: string } | null;
+	error: string | null;
+};
+
 export type Entorno =
 	| { ok: false; error: string; pista: string }
 	| {
@@ -247,12 +257,12 @@ export const api = {
 			'/api/manifiesto',
 			{ salida, modo }
 		),
+	// La corrida arranca en segundo plano; correr() sólo la dispara y devuelve
+	// el estado inicial. corridaEstado() es lo que hay que sondear para saber
+	// cuándo termina y con qué avance va (ver /api/corrida/estado en la API).
 	correr: (manifiesto: string, salida_csv: string, device: string) =>
-		enviar<{ pares_total: number; pares_ok: number; csv: string }>('/api/corrida', {
-			manifiesto,
-			salida_csv,
-			device
-		}),
+		enviar<CorridaEstado>('/api/corrida', { manifiesto, salida_csv, device }),
+	corridaEstado: () => pedir<CorridaEstado>('/api/corrida/estado'),
 
 	urlFoto: (ruta: string) => `${BASE}/api/foto?ruta=${encodeURIComponent(ruta)}`,
 	base: BASE

@@ -1,7 +1,9 @@
 <script lang="ts">
 	// El equivalente visual de `facid doctor`. Carga el modelo, así que puede
 	// tardar; no se pide solo al abrir la app para no bloquear todo lo demás.
-	import { api, type Entorno } from '$lib/api';
+	import { goto } from '$app/navigation';
+	import { api, type CorridaEstado, type Entorno } from '$lib/api';
+	import { cargarCsvs, cargar as cargarResultados } from '$lib/estado.svelte';
 
 	let datos = $state<Entorno | null>(null);
 	let cargando = $state(false);
@@ -20,6 +22,80 @@
 			cargando = false;
 		}
 	}
+
+	// --------------------------------------------- generar + correr manifiesto
+	// Las dos únicas escrituras que expone el API (ver api/main.py). Cuando
+	// cambian las fotos en data/ (se agregan, quitan o renombran) hay que
+	// regenerar el manifiesto antes de correrlo: si sólo cambió el contenido
+	// de un archivo con el mismo nombre, correr alcanza (la caché es por
+	// sha256, no por ruta).
+	let modoManifiesto = $state<'ancla' | 'todos'>('ancla');
+	let manifiesto = $state('mi_set.json');
+	let salidaCsv = $state('scores.csv');
+	let generando = $state(false);
+	let corriendo = $state(false);
+	let resumenManifiesto = $state<{
+		pares: number;
+		match: number;
+		nonmatch: number;
+		n_personas: number;
+	} | null>(null);
+	let resumenCorrida = $state<{ pares_total: number; pares_ok: number; csv: string } | null>(
+		null
+	);
+	let falloAccion = $state<string | null>(null);
+	// La corrida arranca en segundo plano en la API; esto es lo que se va
+	// llenando con cada sondeo a /api/corrida/estado mientras corre.
+	let progreso = $state<CorridaEstado | null>(null);
+
+	const pctProgreso = $derived.by(() => {
+		if (!progreso) return 0;
+		if (progreso.etapa === 'comparacion') return 100;
+		if (!progreso.total) return 0;
+		return Math.round((progreso.actual / progreso.total) * 100);
+	});
+
+	async function generarManifiesto() {
+		generando = true;
+		falloAccion = null;
+		resumenManifiesto = null;
+		try {
+			resumenManifiesto = await api.crearManifiesto(manifiesto, modoManifiesto);
+		} catch (e) {
+			falloAccion = e instanceof Error ? e.message : String(e);
+		} finally {
+			generando = false;
+		}
+	}
+
+	async function correr() {
+		corriendo = true;
+		falloAccion = null;
+		resumenCorrida = null;
+		progreso = null;
+		try {
+			progreso = await api.correr(manifiesto, salidaCsv, device);
+			while (progreso.en_curso) {
+				await new Promise((r) => setTimeout(r, 400));
+				progreso = await api.corridaEstado();
+			}
+			if (progreso.error) falloAccion = progreso.error;
+			else if (progreso.resultado) {
+				resumenCorrida = progreso.resultado;
+				await cargarCsvs();
+			}
+		} catch (e) {
+			falloAccion = e instanceof Error ? e.message : String(e);
+		} finally {
+			corriendo = false;
+		}
+	}
+
+	async function verEnPares() {
+		if (!resumenCorrida) return;
+		await cargarResultados(resumenCorrida.csv.split(/[\\/]/).pop());
+		goto('/pares');
+	}
 </script>
 
 <header class="encabezado">
@@ -29,6 +105,81 @@
 		etiqueta del pack puede mentir, el sha256 del <code>.onnx</code> no.
 	</p>
 </header>
+
+<section class="tarjeta">
+	<h2>Regenerar y correr</h2>
+	<p class="tenue">
+		Cambiaste fotos en <code>data/</code>: primero regenera el manifiesto (lee las carpetas de
+		nuevo), luego córrelo (extrae y compara). Equivale a <code>facid init-manifest</code> +
+		<code>facid run-manifest</code> desde la terminal.
+	</p>
+	<div class="controles">
+		<label>
+			modo
+			<select bind:value={modoManifiesto}>
+				<option value="ancla">ancla</option>
+				<option value="todos">todos</option>
+			</select>
+		</label>
+		<label>
+			manifiesto
+			<input type="text" bind:value={manifiesto} />
+		</label>
+		<button type="button" onclick={generarManifiesto} disabled={generando}>
+			{generando ? 'generando…' : '1. Generar manifiesto'}
+		</button>
+	</div>
+	{#if resumenManifiesto}
+		<p class="tenue resultado-accion">
+			{resumenManifiesto.n_personas} personas → {resumenManifiesto.pares} pares ({resumenManifiesto.match}
+			match, {resumenManifiesto.nonmatch} non-match) escritos en <code>{manifiesto}</code>.
+		</p>
+	{/if}
+
+	<div class="controles controles-corrida">
+		<label>
+			device
+			<select bind:value={device}>
+				<option value="cuda">cuda</option>
+				<option value="cpu">cpu</option>
+			</select>
+		</label>
+		<label>
+			salida csv
+			<input type="text" bind:value={salidaCsv} />
+		</label>
+		<button type="button" onclick={correr} disabled={corriendo}>
+			{corriendo ? 'corriendo…' : '2. Correr'}
+		</button>
+	</div>
+	{#if corriendo && progreso}
+		<div class="progreso">
+			<div class="barra-progreso">
+				<div class="barra-progreso-relleno" style="width: {pctProgreso}%"></div>
+			</div>
+			<p class="tenue progreso-texto">
+				{#if progreso.etapa === 'cargando_modelo'}
+					Cargando el modelo (~300 MB de ONNX)…
+				{:else if progreso.etapa === 'extraccion'}
+					Extrayendo {progreso.actual}/{progreso.total} fotos — <code>{progreso.archivo}</code>
+				{:else if progreso.etapa === 'comparacion'}
+					Comparando {progreso.total} par(es)…
+				{/if}
+			</p>
+		</div>
+	{/if}
+	{#if resumenCorrida}
+		<p class="tenue resultado-accion">
+			{resumenCorrida.pares_ok}/{resumenCorrida.pares_total} pares utilizables en
+			<code>{resumenCorrida.csv.split(/[\\/]/).pop()}</code>.
+			<button type="button" class="enlace" onclick={verEnPares}>Ver en Pares →</button>
+		</p>
+	{/if}
+
+	{#if falloAccion}
+		<p class="tenue error-accion">{falloAccion}</p>
+	{/if}
+</section>
 
 <section class="tarjeta">
 	<div class="controles">
@@ -153,6 +304,71 @@
 		color: var(--ink-3);
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
+	}
+
+	.controles-corrida {
+		margin-top: 0.9rem;
+		padding-top: 0.9rem;
+		border-top: 1px solid var(--linea);
+	}
+
+	input[type='text'] {
+		font: inherit;
+		font-size: 0.85rem;
+		color: var(--ink);
+		background: rgba(10, 25, 70, 0.9);
+		border: 1px solid rgba(255, 255, 255, 0.18);
+		border-radius: 9px;
+		padding: 0.4rem 0.6rem;
+		width: 13ch;
+	}
+
+	.resultado-accion {
+		margin: 0.5rem 0 0;
+	}
+
+	.progreso {
+		margin: 0.6rem 0 0;
+	}
+
+	.barra-progreso {
+		height: 8px;
+		border-radius: 999px;
+		background: rgba(255, 255, 255, 0.1);
+		border: 1px solid rgba(255, 255, 255, 0.14);
+		overflow: hidden;
+	}
+
+	.barra-progreso-relleno {
+		height: 100%;
+		border-radius: 999px;
+		background: linear-gradient(90deg, #2563eb, #93c5fd);
+		transition: width 0.25s ease-out;
+	}
+
+	.progreso-texto {
+		margin: 0.4rem 0 0;
+	}
+
+	.error-accion {
+		margin: 0.5rem 0 0;
+		color: var(--mal);
+	}
+
+	.enlace {
+		font: inherit;
+		font-size: 0.82rem;
+		color: #93c5fd;
+		background: none;
+		border: none;
+		padding: 0;
+		margin-left: 0.3rem;
+		cursor: pointer;
+		text-decoration: underline;
+	}
+
+	.enlace:hover {
+		color: #bfdbfe;
 	}
 
 	.hero {
