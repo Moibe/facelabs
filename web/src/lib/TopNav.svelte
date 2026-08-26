@@ -2,7 +2,7 @@
 	// Barra superior "de vidrio" con tilt 3D al pasar el mouse (parallax).
 	// Se calcula la posición relativa del cursor (-1..1 en cada eje) y la barra
 	// se inclina suavemente hacia él; vuelve a plano al salir (transition).
-	import { estado } from '$lib/estado.svelte';
+	import { estado, cargar } from '$lib/estado.svelte';
 
 	let tiltX = $state(0);
 	let tiltY = $state(0);
@@ -43,7 +43,19 @@
 	{:else if estado.cargando}
 		<span class="estado cargando">cargando…</span>
 	{:else if estado.datos}
-		<span class="estado vivo">{estado.csv}</span>
+		{#if estado.csvs.length > 1}
+			<select
+				class="selector-csv"
+				value={estado.csv}
+				onchange={(e) => cargar((e.currentTarget as HTMLSelectElement).value)}
+			>
+				{#each estado.csvs as c (c)}
+					<option value={c}>{c}</option>
+				{/each}
+			</select>
+		{:else}
+			<span class="estado vivo">{estado.csv}</span>
+		{/if}
 	{/if}
 </header>
 
@@ -138,6 +150,16 @@
 		color: #fecaca;
 		background: rgba(220, 38, 38, 0.22);
 		border-color: rgba(248, 113, 113, 0.5);
+	}
+
+	.selector-csv {
+		font-size: 0.8rem;
+		padding: 0.35rem 0.7rem;
+		border-radius: 999px;
+		border: 1px solid rgba(255, 255, 255, 0.16);
+		background: rgba(255, 255, 255, 0.06);
+		color: rgba(255, 255, 255, 0.85);
+		font-variant-numeric: tabular-nums;
 	}
 
 	@media (max-width: 720px) {
