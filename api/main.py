@@ -58,7 +58,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-EXT_IMG = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+# El tipo se declara a mano y no se deja a `mimetypes`: en Windows .webp no esta
+# registrado y sale como application/octet-stream, que el browser puede negarse a
+# pintar dentro de un <img>.
+TIPO_IMG = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".bmp": "image/bmp",
+    ".webp": "image/webp",
+}
+EXT_IMG = set(TIPO_IMG)
 
 
 # ---------------------------------------------------------------------------
@@ -173,9 +183,10 @@ def foto(ruta: str = Query(..., description="Ruta relativa a data/")):
     destino = _dentro(DATA_DIR, ruta)
     if not destino.is_file():
         raise HTTPException(404, f"no existe: {ruta}")
-    if destino.suffix.lower() not in EXT_IMG:
+    tipo = TIPO_IMG.get(destino.suffix.lower())
+    if tipo is None:
         raise HTTPException(415, f"no es una imagen soportada: {destino.suffix}")
-    return FileResponse(destino)
+    return FileResponse(destino, media_type=tipo)
 
 
 @app.get("/api/csvs")

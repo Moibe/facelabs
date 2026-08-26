@@ -50,6 +50,16 @@ def preparar_fixture() -> None:
             p.parent.mkdir(parents=True, exist_ok=True)
             cv2.imwrite(str(p), np.full((48, 48, 3), 90, np.uint8))
 
+    cv2.imwrite(str(DATA / "familiar" / "03_webp.webp"), np.full((48, 48, 3), 70, np.uint8))
+
+    # Nombre con espacios y acentos: asi salen los archivos reales del usuario.
+    # NO se usa cv2.imwrite aqui: en Windows devuelve True pero NO crea el
+    # archivo si la ruta tiene no-ASCII. Falla en silencio, y el fixture quedaria
+    # incompleto sin que nada avise. imencode + write_bytes no tiene ese problema.
+    ok, buf = cv2.imencode(".png", np.full((48, 48, 3), 60, np.uint8))
+    assert ok
+    (DATA / "yo" / "Captura de pantalla 2026 áé.png").write_bytes(buf.tobytes())
+
     # Un archivo que NO es imagen, para probar el filtro de extensiones.
     (DATA / "yo" / "notas.txt").write_text("no soy una imagen", encoding="utf-8")
     # Un archivo fuera de data/, objetivo del intento de escape.
@@ -111,7 +121,7 @@ def test_personas():
     check(r.status_code == 200, "responde 200")
     d = r.json()
     check(d["n_personas"] == 3, f"3 personas (dio {d['n_personas']})")
-    check(d["n_fotos"] == 6, f"6 fotos (dio {d['n_fotos']})")
+    check(d["n_fotos"] == 8, f"8 fotos (dio {d['n_fotos']})")
     nombres = {p["persona"] for p in d["personas"]}
     check(nombres == {"yo", "familiar", "otra_1"}, "nombra las carpetas como personas")
     todas = [f["nombre"] for p in d["personas"] for f in p["fotos"]]
@@ -133,6 +143,16 @@ def test_foto_y_sandbox():
 
     r = cli.get("/api/foto", params={"ruta": "yo/notas.txt"})
     check(r.status_code == 415, "archivo que no es imagen -> 415, no se sirve")
+
+    # El tipo se declara a mano: en Windows mimetypes no conoce .webp y lo manda
+    # como application/octet-stream, que el browser puede negarse a pintar.
+    r = cli.get("/api/foto", params={"ruta": "familiar/03_webp.webp"})
+    check(r.status_code == 200 and r.headers["content-type"] == "image/webp",
+          f"sirve .webp con su tipo correcto (dio {r.headers.get('content-type')})")
+
+    # Nombres con espacios y acentos: es como salen las capturas de pantalla.
+    r = cli.get("/api/foto", params={"ruta": "yo/Captura de pantalla 2026 áé.png"})
+    check(r.status_code == 200, "sirve archivos con espacios y acentos en el nombre")
 
     # Lo importante: ningun intento de escape debe devolver 200.
     escapes = [

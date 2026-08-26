@@ -65,6 +65,29 @@
 
 {#if estado.cargando && !d}
 	<section class="tarjeta"><p>Cargando…</p></section>
+{:else if estado.csvs.length === 0}
+	<!-- Estado inicial real: hay fotos pero todavía nadie corrió el pipeline.
+	     Sin esto, el primer arranque muestra "no existe el CSV: scores.csv", que
+	     es cierto pero no dice qué hacer. -->
+	<section class="tarjeta">
+		<h1>Todavía no hay resultados</h1>
+		<p>
+			El tablero lee <code>out/*.csv</code>, que produce la CLI. Aún no hay ninguno. La secuencia,
+			desde la raíz del repo:
+		</p>
+		<pre>python -m facid init-manifest data -o manifests/mi_set.json
+python -m facid run-manifest manifests/mi_set.json -o out/scores.csv</pre>
+		<p class="tenue">
+			<code>init-manifest</code> corre en cualquier máquina (sólo lee carpetas).
+			<code>run-manifest</code> carga el modelo, así que necesita la máquina con insightface
+			instalado.
+		</p>
+		<p>
+			Mientras tanto, <a href="/set">El set</a> ya funciona: ahí puedes revisar visualmente las fotos
+			que metiste antes de gastar tiempo procesándolas.
+		</p>
+		<button type="button" onclick={() => cargar()}>Reintentar</button>
+	</section>
 {:else if estado.error && !d?.ok}
 	<section class="tarjeta borde-mal">
 		<h1>No se puede calibrar</h1>
