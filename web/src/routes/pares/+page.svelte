@@ -292,6 +292,7 @@
 
 	figure {
 		margin: 0;
+		min-width: 0;
 		display: flex;
 		flex-direction: column;
 		gap: 0.25rem;
