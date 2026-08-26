@@ -13,6 +13,13 @@ data/**
 !data/**/.gitkeep
 !data/README.md
 
+# Manifiestos reales: los genera init-manifest a partir de data/, y sus rutas
+# llevan nombres de archivo reales de las personas del experimento (mismo
+# problema de privacidad que las fotos, aunque no tengan el pixel). Se versiona
+# sólo el ejemplo, que usa nombres inventados.
+manifests/*
+!manifests/ejemplo.json
+
 # Salidas del harness (regenerables desde data/ + manifests/)
 out/*
 !out/.gitkeep
