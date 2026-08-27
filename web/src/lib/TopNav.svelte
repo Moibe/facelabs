@@ -157,9 +157,17 @@
 		padding: 0.35rem 0.7rem;
 		border-radius: 999px;
 		border: 1px solid rgba(255, 255, 255, 0.16);
-		background: rgba(255, 255, 255, 0.06);
+		/* Sólido, no translúcido: el popup del <select> lo pinta el SO sobre su
+		   propia superficie opaca, sin el gradiente de la página detrás. Un
+		   fondo casi-transparente ahí se ve blanco puro (el bug reportado). */
+		background: rgba(10, 25, 70, 0.95);
 		color: rgba(255, 255, 255, 0.85);
 		font-variant-numeric: tabular-nums;
+	}
+
+	.selector-csv option {
+		background: rgb(10, 25, 70);
+		color: rgba(255, 255, 255, 0.92);
 	}
 
 	@media (max-width: 720px) {
