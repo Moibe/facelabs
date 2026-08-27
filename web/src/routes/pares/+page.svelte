@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { api, type Par } from '$lib/api';
+	import { arrastrarRecorte } from '$lib/arrastrar-recorte';
 	import { estado, fijarThreshold, objectPosition, veredicto } from '$lib/estado.svelte';
 
 	const d = $derived(estado.datos);
@@ -119,7 +120,10 @@
 									src={api.urlFoto(foto)}
 									alt={nombreCorto(raw)}
 									loading="lazy"
+									draggable="false"
 									style="object-position: {objectPosition(foto)}"
+									title="Arrastra para recentrar · doble clic para restaurar"
+									use:arrastrarRecorte={foto}
 								/>
 							{:else}
 								<div class="sin-foto" title={raw}>sin<br />archivo</div>
@@ -175,11 +179,14 @@
 								<figure>
 									{#if foto}
 										<img
-										src={api.urlFoto(foto)}
-										alt={nombreCorto(raw)}
-										loading="lazy"
-										style="object-position: {objectPosition(foto)}"
-									/>
+											src={api.urlFoto(foto)}
+											alt={nombreCorto(raw)}
+											loading="lazy"
+											draggable="false"
+											style="object-position: {objectPosition(foto)}"
+											title="Arrastra para recentrar · doble clic para restaurar"
+											use:arrastrarRecorte={foto}
+										/>
 									{:else}
 										<div class="sin-foto" title={raw}>sin<br />archivo</div>
 									{/if}
@@ -317,6 +324,17 @@
 		background: rgba(0, 0, 0, 0.35);
 		border: 1px solid rgba(255, 255, 255, 0.14);
 		display: block;
+	}
+
+	img {
+		cursor: grab;
+		touch-action: none;
+		user-select: none;
+		-webkit-user-drag: none;
+	}
+
+	img:global(.arrastrando-recorte) {
+		cursor: grabbing;
 	}
 
 	.sin-foto {
