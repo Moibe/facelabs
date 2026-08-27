@@ -16,6 +16,14 @@ OUT_DIR = Path(os.environ.get("FACID_OUT", REPO_ROOT / "out")).expanduser()
 EMBEDDINGS_DIR = OUT_DIR / "embeddings"
 INDEX_DB = OUT_DIR / "index.sqlite"
 
+# Corpus externo de "Run" (busqueda 1:N, ver facid/busqueda.py): una carpeta
+# GRANDE y ajena a data/ contra la que se compara un subset de referencia. El
+# default es especifico de esta maquina/usuario, no un valor generico del
+# proyecto -- ver README de Run antes de asumir que aplica en otro lado.
+CORPUS_DIR = Path(
+    os.environ.get("FACID_CORPUS", r"C:\Moibe\code\chaturlist\rostros")
+).expanduser()
+
 # insightface baja/lee los pesos en {MODEL_ROOT}/models/{MODEL_PACK}/.
 # Default: dentro del repo, para que el experimento sea auto-contenido y los
 # .onnx sean hasheables. Apúntalo a ~/.insightface si ya los tienes bajados.

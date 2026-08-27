@@ -72,6 +72,31 @@ async function enviar<T>(ruta: string, cuerpo: unknown): Promise<T> {
 	return (await r.json()) as T;
 }
 
+// multipart/form-data en vez de JSON: sólo lo usa /api/subir-fotos.
+async function enviarArchivos<T>(ruta: string, form: FormData): Promise<T> {
+	let r: Response;
+	try {
+		r = await fetch(BASE + ruta, {
+			method: 'POST',
+			body: form,
+			signal: AbortSignal.timeout(120_000)
+		});
+	} catch (causa) {
+		throw new ApiCaida(causa);
+	}
+	if (!r.ok) {
+		let detalle = `HTTP ${r.status}`;
+		try {
+			const j = await r.json();
+			if (typeof j?.detail === 'string') detalle = j.detail;
+		} catch {
+			/* sin JSON */
+		}
+		throw new ApiError(r.status, detalle);
+	}
+	return (await r.json()) as T;
+}
+
 // ---------------------------------------------------------------- tipos
 export type Distribucion = {
 	n: number;
@@ -242,6 +267,36 @@ export type Entorno =
 			cuda_libs_preloaded: number;
 	  };
 
+// ------------------------------------------------------------ Run: busqueda
+export type CorpusResumen = {
+	existe: boolean;
+	corpus_dir: string;
+	n_carpetas: number;
+};
+
+export type IndexarEstado = {
+	en_curso: boolean;
+	etapa: 'cargando_modelo' | 'indexando' | '';
+	actual: number;
+	total: number;
+	archivo: string;
+	resultado: {
+		carpetas_vistas: number;
+		fotos_vistas: number;
+		indexadas_ok: number;
+		fallidas: number;
+	} | null;
+	error: string | null;
+};
+
+export type Coincidencia = { persona: string; archivo: string; score: number; ruta: string };
+
+export type ResultadoBusqueda = {
+	n_indexado: number;
+	n_carpetas_indexadas: number;
+	resultados: { consulta: string; error: string | null; coincidencias: Coincidencia[] }[];
+};
+
 // ---------------------------------------------------------------- llamadas
 export const api = {
 	version: () => pedir<{ name: string; version: string }>('/'),
@@ -274,5 +329,48 @@ export const api = {
 		}),
 
 	urlFoto: (ruta: string) => `${BASE}/api/foto?ruta=${encodeURIComponent(ruta)}`,
+
+	// -------------------------------------------------------- Run: busqueda
+	// El "dropbox": sube fotos de referencia a data/<persona>/, mismo destino
+	// que usa Labs. archivos puede venir de un <input type=file multiple> o
+	// de un DataTransfer.files al soltar un drag-and-drop.
+	subirFotos: (persona: string, archivos: FileList | File[]) => {
+		const form = new FormData();
+		form.set('persona', persona);
+		for (const a of archivos) form.append('archivos', a);
+		return enviarArchivos<{ persona: string; guardadas: string[] }>('/api/subir-fotos', form);
+	},
+
+	corpusResumen: () => pedir<CorpusResumen>('/api/corpus/resumen'),
+	urlFotoCorpus: (ruta: string) => `${BASE}/api/corpus/foto?ruta=${encodeURIComponent(ruta)}`,
+
+	// Igual que correr()/corridaEstado(): indexar arranca en segundo plano
+	// (puede tardar horas en el corpus completo), indexarEstado() sondea.
+	indexarCorpus: (limiteCarpetas: number | null, limitePorCarpeta: number | null, device: string) =>
+		enviar<IndexarEstado>('/api/corpus/indexar', {
+			limite_carpetas: limiteCarpetas,
+			limite_por_carpeta: limitePorCarpeta,
+			device
+		}),
+	indexarEstado: () => pedir<IndexarEstado>('/api/corpus/indexar/estado'),
+
+	// Sincrono: sólo extrae las pocas fotos de consulta si hiciera falta, y
+	// compara contra lo que YA este indexado (rapido incluso con el corpus
+	// completo indexado — no re-extrae nada del corpus).
+	buscarEnCorpus: (
+		persona: string,
+		limiteCarpetas: number | null,
+		limitePorCarpeta: number | null,
+		device: string,
+		topN = 15
+	) =>
+		enviar<ResultadoBusqueda>('/api/corpus/buscar', {
+			persona,
+			limite_carpetas: limiteCarpetas,
+			limite_por_carpeta: limitePorCarpeta,
+			device,
+			top_n: topN
+		}),
+
 	base: BASE
 };

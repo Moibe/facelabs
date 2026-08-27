@@ -1,13 +1,498 @@
+<script lang="ts">
+	import {
+		api,
+		type CorpusResumen,
+		type IndexarEstado,
+		type ResultadoBusqueda
+	} from '$lib/api';
+
+	// ---------------------------------------------- 1. subir fotos (dropbox)
+	let personaConsulta = $state('');
+	let subiendo = $state(false);
+	let arrastrandoArchivo = $state(false);
+	let fotosSubidas = $state<string[]>([]);
+	let errorSubida = $state<string | null>(null);
+
+	async function subirArchivos(archivos: FileList | File[]) {
+		if (!personaConsulta.trim()) {
+			errorSubida = 'Ponle un nombre a la persona que buscas antes de subir fotos.';
+			return;
+		}
+		subiendo = true;
+		errorSubida = null;
+		try {
+			const r = await api.subirFotos(personaConsulta.trim(), archivos);
+			fotosSubidas = [...fotosSubidas, ...r.guardadas];
+		} catch (e) {
+			errorSubida = e instanceof Error ? e.message : String(e);
+		} finally {
+			subiendo = false;
+		}
+	}
+
+	function onDrop(e: DragEvent) {
+		e.preventDefault();
+		arrastrandoArchivo = false;
+		if (e.dataTransfer?.files?.length) void subirArchivos(e.dataTransfer.files);
+	}
+
+	function onFileInput(e: Event) {
+		const files = (e.currentTarget as HTMLInputElement).files;
+		if (files?.length) void subirArchivos(files);
+		(e.currentTarget as HTMLInputElement).value = '';
+	}
+
+	// -------------------------------------------- 2. corpus: resumen/indexar
+	let corpus = $state<CorpusResumen | null>(null);
+	let limiteCarpetas = $state(10);
+	let limitePorCarpeta = $state(5);
+	// Default 'cpu' a proposito (distinto de Entorno): esta maquina no tiene
+	// GPU, y una indexacion mal apuntada aqui puede tardar horas antes de que
+	// alguien note el error, no segundos.
+	let device = $state<'cuda' | 'cpu'>('cpu');
+	let indexando = $state(false);
+	let progresoIndexar = $state<IndexarEstado | null>(null);
+	let errorIndexar = $state<string | null>(null);
+
+	$effect(() => {
+		api
+			.corpusResumen()
+			.then((r) => (corpus = r))
+			.catch(() => (corpus = null));
+	});
+
+	const pctIndexar = $derived.by(() => {
+		if (!progresoIndexar || !progresoIndexar.total) return 0;
+		return Math.round((progresoIndexar.actual / progresoIndexar.total) * 100);
+	});
+
+	async function indexar() {
+		indexando = true;
+		errorIndexar = null;
+		progresoIndexar = null;
+		try {
+			progresoIndexar = await api.indexarCorpus(
+				limiteCarpetas || null,
+				limitePorCarpeta || null,
+				device
+			);
+			while (progresoIndexar.en_curso) {
+				await new Promise((r) => setTimeout(r, 500));
+				progresoIndexar = await api.indexarEstado();
+			}
+			if (progresoIndexar.error) errorIndexar = progresoIndexar.error;
+		} catch (e) {
+			errorIndexar = e instanceof Error ? e.message : String(e);
+		} finally {
+			indexando = false;
+		}
+	}
+
+	// ------------------------------------------------------------ 3. buscar
+	let buscando = $state(false);
+	let resultado = $state<ResultadoBusqueda | null>(null);
+	let errorBuscar = $state<string | null>(null);
+	// Punto de partida: el threshold que ya calibraste en Labs. Editable —
+	// aqui no hay pares etiquetados que lo recalculen solo.
+	let umbral = $state(0.181);
+
+	async function buscar() {
+		if (!personaConsulta.trim()) {
+			errorBuscar = 'Ponle un nombre a la persona que buscas.';
+			return;
+		}
+		buscando = true;
+		errorBuscar = null;
+		resultado = null;
+		try {
+			resultado = await api.buscarEnCorpus(
+				personaConsulta.trim(),
+				limiteCarpetas || null,
+				limitePorCarpeta || null,
+				device
+			);
+		} catch (e) {
+			errorBuscar = e instanceof Error ? e.message : String(e);
+		} finally {
+			buscando = false;
+		}
+	}
+
+	const pct = (v: number) => `${(v * 100).toFixed(1)}%`;
+</script>
+
 <header class="encabezado">
 	<h1>Run</h1>
+	<p class="tenue">
+		Busca si una persona de referencia aparece en un corpus externo grande y sin clasificar.
+		Distinto de Labs: ahí se calibra un threshold sobre pares con etiqueta conocida; aquí no hay
+		etiqueta — es una búsqueda 1:N, no una calibración.
+	</p>
 </header>
 
 <section class="tarjeta">
-	<p class="tenue">Todavía no hay nada aquí.</p>
+	<h2>1 · Fotos de referencia</h2>
+	<label class="campo">
+		<span>Persona que buscas</span>
+		<input type="text" placeholder="ej. mi-hermana" bind:value={personaConsulta} />
+	</label>
+	<p class="tenue">
+		Se guardan en <code>data/{personaConsulta.trim() || '…'}/</code> — el mismo lugar que usa
+		Labs.
+	</p>
+
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div
+		class="dropzone"
+		class:activa={arrastrandoArchivo}
+		ondragover={(e) => {
+			e.preventDefault();
+			arrastrandoArchivo = true;
+		}}
+		ondragleave={() => (arrastrandoArchivo = false)}
+		ondrop={onDrop}
+	>
+		{#if subiendo}
+			<p>Subiendo…</p>
+		{:else}
+			<p>Arrastra fotos aquí, o</p>
+			<label class="chip elegir">
+				elegir archivos
+				<input type="file" accept="image/*" multiple onchange={onFileInput} hidden />
+			</label>
+		{/if}
+	</div>
+
+	{#if errorSubida}
+		<p class="tenue error-texto">{errorSubida}</p>
+	{/if}
+
+	{#if fotosSubidas.length}
+		<div class="tira">
+			{#each fotosSubidas as ruta (ruta)}
+				<figure>
+					<img src={api.urlFoto(ruta)} alt={ruta} loading="lazy" />
+				</figure>
+			{/each}
+		</div>
+	{/if}
+</section>
+
+<section class="tarjeta">
+	<h2>2 · Corpus externo</h2>
+	{#if corpus === null}
+		<p class="tenue">Cargando…</p>
+	{:else if !corpus.existe}
+		<p class="tenue">
+			No se encontró <code>{corpus.corpus_dir}</code>. Apúntalo con la variable de entorno
+			<code>FACID_CORPUS</code> antes de arrancar la API.
+		</p>
+	{:else}
+		<p class="tenue">
+			<code>{corpus.corpus_dir}</code> · {corpus.n_carpetas} carpeta(s) disponibles
+		</p>
+		<div class="controles">
+			<label>
+				carpetas a indexar
+				<input type="number" min="0" bind:value={limiteCarpetas} />
+			</label>
+			<label>
+				fotos por carpeta
+				<input type="number" min="0" bind:value={limitePorCarpeta} />
+			</label>
+			<label>
+				device
+				<select bind:value={device}>
+					<option value="cpu">cpu</option>
+					<option value="cuda">cuda</option>
+				</select>
+			</label>
+			<button type="button" onclick={indexar} disabled={indexando}>
+				{indexando ? 'indexando…' : 'Indexar'}
+			</button>
+		</div>
+		<p class="tenue">
+			0 = sin límite — el corpus completo puede tardar horas en CPU. Lo ya indexado no se vuelve
+			a extraer (caché por contenido, no por ruta).
+		</p>
+		{#if indexando && progresoIndexar}
+			<div class="progreso">
+				<div class="barra-progreso">
+					<div class="barra-progreso-relleno" style="width: {pctIndexar}%"></div>
+				</div>
+				<p class="tenue progreso-texto">
+					{#if progresoIndexar.etapa === 'cargando_modelo'}
+						Cargando el modelo…
+					{:else if progresoIndexar.etapa === 'indexando'}
+						Indexando {progresoIndexar.actual}/{progresoIndexar.total} —
+						<code>{progresoIndexar.archivo}</code>
+					{/if}
+				</p>
+			</div>
+		{/if}
+		{#if progresoIndexar?.resultado}
+			<p class="tenue resultado-accion">
+				{progresoIndexar.resultado.indexadas_ok}/{progresoIndexar.resultado.fotos_vistas} fotos
+				indexadas de {progresoIndexar.resultado.carpetas_vistas} carpeta(s)
+				{#if progresoIndexar.resultado.fallidas}
+					· {progresoIndexar.resultado.fallidas} fallida(s)
+				{/if}
+				.
+			</p>
+		{/if}
+		{#if errorIndexar}
+			<p class="tenue error-texto">{errorIndexar}</p>
+		{/if}
+	{/if}
+</section>
+
+<section class="tarjeta">
+	<h2>3 · Buscar</h2>
+	<div class="controles">
+		<label>
+			umbral
+			<input type="number" step="0.01" min="-1" max="1" bind:value={umbral} />
+		</label>
+		<button type="button" onclick={buscar} disabled={buscando || !personaConsulta.trim()}>
+			{buscando ? 'buscando…' : 'Buscar coincidencias'}
+		</button>
+	</div>
+	<p class="tenue">
+		Busca sobre lo que YA esté en <code>data/{personaConsulta.trim() || '…'}/</code> — no hace
+		falta que las hayas subido en esta sesión; si la persona ya tenía fotos de antes, también
+		cuentan.
+	</p>
+	{#if errorBuscar}
+		<p class="tenue error-texto">{errorBuscar}</p>
+	{/if}
+
+	{#if resultado}
+		<p class="tenue resultado-accion">
+			Comparado contra {resultado.n_indexado} foto(s) indexada(s) de
+			{resultado.n_carpetas_indexadas} carpeta(s). Resaltadas las que igualan o superan el umbral.
+		</p>
+		{#each resultado.resultados as r (r.consulta)}
+			<div class="consulta">
+				<h3>{r.consulta}</h3>
+				{#if r.error}
+					<p class="tenue error-texto">{r.error}</p>
+				{:else if !r.coincidencias.length}
+					<p class="tenue">Sin coincidencias en lo indexado.</p>
+				{:else}
+					<div class="tira">
+						{#each r.coincidencias as c (c.ruta)}
+							<figure class:alerta={c.score >= umbral}>
+								<img src={api.urlFotoCorpus(c.ruta)} alt={c.persona} loading="lazy" />
+								<span class="score">{pct(c.score)}</span>
+								<figcaption>{c.persona}</figcaption>
+							</figure>
+						{/each}
+					</div>
+				{/if}
+			</div>
+		{/each}
+	{/if}
 </section>
 
 <style>
 	.encabezado {
 		margin: 0.4rem 0 1rem;
+		max-width: 70ch;
+	}
+
+	h3 {
+		font-size: 0.9rem;
+		margin: 0.9rem 0 0.4rem;
+		font-weight: 600;
+	}
+
+	.campo {
+		display: flex;
+		flex-direction: column;
+		gap: 0.3rem;
+		font-size: 0.82rem;
+		color: var(--ink-3);
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		margin-bottom: 0.5rem;
+		max-width: 320px;
+	}
+
+	.campo input[type='text'] {
+		font: inherit;
+		font-size: 0.95rem;
+		text-transform: none;
+		letter-spacing: normal;
+		color: var(--ink);
+		background: rgba(10, 25, 70, 0.9);
+		border: 1px solid rgba(255, 255, 255, 0.18);
+		border-radius: 9px;
+		padding: 0.5rem 0.7rem;
+	}
+
+	.dropzone {
+		margin-top: 0.6rem;
+		padding: 1.4rem;
+		border-radius: 12px;
+		border: 1.5px dashed rgba(255, 255, 255, 0.25);
+		text-align: center;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.6rem;
+		transition:
+			border-color 0.15s ease,
+			background 0.15s ease;
+	}
+
+	.dropzone.activa {
+		border-color: rgba(147, 197, 253, 0.8);
+		background: rgba(147, 197, 253, 0.08);
+	}
+
+	.chip.elegir {
+		display: inline-block;
+		font: inherit;
+		font-size: 0.85rem;
+		color: var(--ink);
+		background: rgba(255, 255, 255, 0.07);
+		border: 1px solid rgba(255, 255, 255, 0.18);
+		border-radius: 999px;
+		padding: 0.4rem 0.9rem;
+		cursor: pointer;
+		transition:
+			background 0.16s ease,
+			border-color 0.16s ease;
+	}
+
+	.chip.elegir:hover {
+		background: rgba(255, 255, 255, 0.13);
+		border-color: rgba(255, 255, 255, 0.3);
+	}
+
+	.controles {
+		display: flex;
+		align-items: center;
+		gap: 0.8rem;
+		flex-wrap: wrap;
+		margin-bottom: 0.5rem;
+	}
+
+	.controles label {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.45rem;
+		font-size: 0.82rem;
+		color: var(--ink-3);
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+	}
+
+	.controles input[type='number'] {
+		font: inherit;
+		color: var(--ink);
+		background: rgba(10, 25, 70, 0.9);
+		border: 1px solid rgba(255, 255, 255, 0.18);
+		border-radius: 9px;
+		padding: 0.4rem 0.5rem;
+		width: 6ch;
+	}
+
+	.tira {
+		display: flex;
+		gap: 0.6rem;
+		overflow-x: auto;
+		padding-bottom: 0.4rem;
+		margin-top: 0.6rem;
+	}
+
+	figure {
+		position: relative;
+		margin: 0;
+		flex: 0 0 96px;
+		display: flex;
+		flex-direction: column;
+		gap: 0.25rem;
+	}
+
+	img {
+		width: 96px;
+		height: 96px;
+		object-fit: cover;
+		border-radius: 9px;
+		border: 1px solid rgba(255, 255, 255, 0.14);
+		background: rgba(0, 0, 0, 0.35);
+		display: block;
+	}
+
+	figure.alerta img {
+		border-color: var(--mal);
+		box-shadow: 0 0 0 2px rgba(248, 113, 113, 0.35);
+	}
+
+	figcaption {
+		font-size: 0.66rem;
+		color: var(--ink-3);
+		font-family: ui-monospace, Consolas, monospace;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		width: 96px;
+	}
+
+	.score {
+		position: absolute;
+		bottom: 22px;
+		right: 4px;
+		font-size: 0.66rem;
+		font-family: ui-monospace, Consolas, monospace;
+		padding: 0.1rem 0.35rem;
+		border-radius: 999px;
+		background: rgba(10, 25, 70, 0.85);
+		border: 1px solid rgba(255, 255, 255, 0.25);
+		color: var(--ink);
+	}
+
+	.consulta {
+		border-top: 1px solid var(--linea);
+		padding-top: 0.6rem;
+		margin-top: 0.6rem;
+	}
+
+	.consulta:first-of-type {
+		border-top: none;
+		margin-top: 0;
+	}
+
+	.progreso {
+		margin: 0.6rem 0 0;
+	}
+
+	.barra-progreso {
+		height: 8px;
+		border-radius: 999px;
+		background: rgba(255, 255, 255, 0.1);
+		border: 1px solid rgba(255, 255, 255, 0.14);
+		overflow: hidden;
+	}
+
+	.barra-progreso-relleno {
+		height: 100%;
+		border-radius: 999px;
+		background: linear-gradient(90deg, #2563eb, #93c5fd);
+		transition: width 0.25s ease-out;
+	}
+
+	.progreso-texto {
+		margin: 0.4rem 0 0;
+	}
+
+	.resultado-accion {
+		margin: 0.5rem 0 0;
+	}
+
+	.error-texto {
+		margin: 0.5rem 0 0;
+		color: var(--mal);
 	}
 </style>

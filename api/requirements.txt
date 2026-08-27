@@ -2,3 +2,4 @@
 # proposito: la CLI debe poder instalarse y correr sin fastapi ni uvicorn.
 fastapi>=0.115
 uvicorn>=0.30
+python-multipart>=0.0.9   # requerido por fastapi para parsear /api/subir-fotos (multipart)

@@ -37,6 +37,7 @@ from facid.dependencia import estructura, jackknife_por_persona  # noqa: E402
 from facid.harness import (  # noqa: E402
     ManifestError, cargar_manifiesto, init_manifest, run_manifest,
 )
+from facid.busqueda import descubrir_corpus  # noqa: E402
 from facid.store import EmbeddingStore  # noqa: E402
 
 FALLOS: list[str] = []
@@ -563,6 +564,37 @@ def test_init_manifest():
         check(True, "excluir todas las fotos -> ManifestError, igual que un data/ vacio")
 
 
+# ==================================================== 7b. descubrir_corpus
+def test_descubrir_corpus():
+    print("\n[7b] descubrir_corpus — limites para un corpus grande")
+    d = TMP / "corpus"
+    plan = {"p1": 3, "p2": 2, "p3": 1}
+    for persona, n in plan.items():
+        for i in range(1, n + 1):
+            escribir_img(d / persona / f"{i:02d}_foto.jpg", 1)
+    (d / "vacia").mkdir(parents=True, exist_ok=True)
+    (d / "suelta.jpg").write_bytes(b"x")
+
+    sin_limite = descubrir_corpus(d)
+    check(set(sin_limite) == {"p1", "p2", "p3"}, "ignora carpetas vacias y archivos sueltos")
+    check(sum(len(v) for v in sin_limite.values()) == 6, "sin limite trae las 6 fotos")
+
+    con_limite_carpetas = descubrir_corpus(d, limite_carpetas=2)
+    check(len(con_limite_carpetas) == 2, "limite_carpetas corta el numero de personas")
+    check(set(con_limite_carpetas) == {"p1", "p2"},
+          "toma las primeras alfabeticamente, reproducible entre corridas")
+
+    con_limite_fotos = descubrir_corpus(d, limite_por_carpeta=1)
+    check(all(len(v) == 1 for v in con_limite_fotos.values()),
+          "limite_por_carpeta corta fotos por persona, no elimina personas")
+
+    try:
+        descubrir_corpus(d / "no_existe")
+        check(False, "corpus inexistente debe lanzar")
+    except FileNotFoundError:
+        check(True, "corpus inexistente -> FileNotFoundError")
+
+
 # ================================================== 8. provider en el reporte
 def _csv_min(destino, provs=None):
     """CSV minimo con 2 match y 2 non-match. provs: (pa, pb) por fila, o None."""
@@ -631,6 +663,7 @@ def main() -> int:
     test_calibracion_exacta()
     test_dependencia()
     test_init_manifest()
+    test_descubrir_corpus()
     test_harness_end_to_end()
     test_provider_en_reporte()
 

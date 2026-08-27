@@ -21,8 +21,10 @@ sys.path.insert(0, str(RAIZ))
 TMP = Path(tempfile.mkdtemp(prefix="facid_api_"))
 DATA = TMP / "data"
 OUT = TMP / "out"
+CORPUS = TMP / "corpus"
 os.environ["FACID_DATA"] = str(DATA)      # ANTES de importar cualquier cosa de facid
 os.environ["FACID_OUT"] = str(OUT)
+os.environ["FACID_CORPUS"] = str(CORPUS)
 
 import cv2                                                    # noqa: E402
 import numpy as np                                            # noqa: E402
@@ -96,6 +98,13 @@ def preparar_fixture() -> None:
                     "unico", "", sha("../data/yo/01_ancla.jpg"), "", CUDA, ""])
         # Un CSV que es salida del analisis, no entrada: /api/csvs debe filtrarlo.
     (OUT / "sweep_fmr_fnmr.csv").write_text("threshold,fmr\n0.0,1.0\n", encoding="utf-8")
+
+    # Corpus externo de Run: un par de "personas" con una foto cada una.
+    (CORPUS / "candidato_a").mkdir(parents=True, exist_ok=True)
+    (CORPUS / "candidato_b").mkdir(parents=True, exist_ok=True)
+    cv2.imwrite(str(CORPUS / "candidato_a" / "01.jpg"), np.full((48, 48, 3), 50, np.uint8))
+    cv2.imwrite(str(CORPUS / "candidato_b" / "01.jpg"), np.full((48, 48, 3), 55, np.uint8))
+    (TMP / "corpus_secreto.txt").write_text("fuera del corpus", encoding="utf-8")
 
 
 preparar_fixture()
@@ -328,6 +337,66 @@ def test_mover_foto():
     check((TMP / "secreto.txt").is_file(), "el intento de escape no toco el archivo real")
 
 
+def test_subir_fotos():
+    print("\n[api-10] /api/subir-fotos — el 'dropbox' de Run")
+    _, buf1 = cv2.imencode(".jpg", np.full((10, 10, 3), 10, np.uint8))
+    _, buf2 = cv2.imencode(".jpg", np.full((10, 10, 3), 20, np.uint8))
+
+    r = cli.post(
+        "/api/subir-fotos",
+        data={"persona": "consulta_test"},
+        files=[
+            ("archivos", ("foto1.jpg", buf1.tobytes(), "image/jpeg")),
+            ("archivos", ("foto2.jpg", buf2.tobytes(), "image/jpeg")),
+        ],
+    )
+    check(r.status_code == 200, f"sube dos fotos (dio {r.status_code})")
+    j = r.json()
+    check(set(j["guardadas"]) == {"consulta_test/foto1.jpg", "consulta_test/foto2.jpg"},
+          f"reporta las rutas guardadas (dio {j['guardadas']})")
+    check((DATA / "consulta_test" / "foto1.jpg").is_file(), "el archivo 1 quedo en disco")
+    check((DATA / "consulta_test" / "foto2.jpg").is_file(), "el archivo 2 quedo en disco")
+
+    _, buf3 = cv2.imencode(".jpg", np.full((10, 10, 3), 30, np.uint8))
+    r = cli.post(
+        "/api/subir-fotos",
+        data={"persona": "consulta_test"},
+        files=[("archivos", ("foto1.jpg", buf3.tobytes(), "image/jpeg"))],
+    )
+    j = r.json()
+    check(r.status_code == 200 and j["guardadas"] == ["consulta_test/foto1_2.jpg"],
+          f"colision de nombre -> sufijo numerico, no pisa el original (dio {j})")
+    check((DATA / "consulta_test" / "foto1.jpg").stat().st_size == len(buf1.tobytes()),
+          "el archivo original NO se sobreescribio")
+
+    r = cli.post("/api/subir-fotos", data={"persona": "a/b"},
+                files=[("archivos", ("x.jpg", buf1.tobytes(), "image/jpeg"))])
+    check(r.status_code == 400, f"nombre de persona con '/' se rechaza (dio {r.status_code})")
+
+    r = cli.post("/api/subir-fotos", data={"persona": "consulta_test"},
+                files=[("archivos", ("notas.txt", b"no soy imagen", "text/plain"))])
+    check(r.status_code == 415, f"archivo no soportado -> 415 (dio {r.status_code})")
+
+
+def test_corpus():
+    print("\n[api-11] /api/corpus — resumen y servir fotos (sin modelo)")
+    r = cli.get("/api/corpus/resumen")
+    check(r.status_code == 200, "resumen responde 200")
+    j = r.json()
+    check(j["existe"] is True and j["n_carpetas"] == 2,
+          f"cuenta las 2 carpetas del corpus de prueba (dio {j})")
+
+    r = cli.get("/api/corpus/foto", params={"ruta": "candidato_a/01.jpg"})
+    check(r.status_code == 200 and r.headers["content-type"] == "image/jpeg",
+          "sirve una foto del corpus")
+
+    r = cli.get("/api/corpus/foto", params={"ruta": "../corpus_secreto.txt"})
+    check(r.status_code == 400, f"escapar del corpus con '../' se rechaza (dio {r.status_code})")
+
+    r = cli.get("/api/corpus/foto", params={"ruta": "no_existe/x.jpg"})
+    check(r.status_code == 404, f"foto inexistente en el corpus -> 404 (dio {r.status_code})")
+
+
 def main() -> int:
     print(f"Directorio temporal: {TMP}")
     test_salud()
@@ -339,6 +408,8 @@ def main() -> int:
     test_no_rompe_la_cli()
     test_cors()
     test_mover_foto()
+    test_subir_fotos()
+    test_corpus()
 
     print("\n" + "=" * 60)
     if FALLOS:

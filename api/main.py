@@ -9,10 +9,11 @@ usa la CLI.
 Consecuencia practica: si un numero del front no cuadra con el de la terminal,
 es un bug de serializacion, nunca dos implementaciones que se separaron.
 
-Solo lectura salvo tres POST explicitos (generar manifiesto / correr una
-corrida / mover una foto entre personas). Escucha en 127.0.0.1 y nada mas:
-esto procesa fotos de personas que dieron consentimiento para un experimento,
-no para exponer un puerto.
+Solo lectura salvo seis POST explicitos (generar manifiesto / correr una
+corrida / mover una foto entre personas / subir fotos / indexar un corpus
+externo / buscar contra ese corpus). Escucha en 127.0.0.1 y nada mas: esto
+procesa fotos de personas que dieron consentimiento para un experimento, no
+para exponer un puerto.
 """
 
 from __future__ import annotations
@@ -26,14 +27,14 @@ REPO = Path(__file__).resolve().parent.parent
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
-from fastapi import FastAPI, HTTPException, Query          # noqa: E402
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware          # noqa: E402
 from fastapi.responses import FileResponse                  # noqa: E402
 from pydantic import BaseModel                              # noqa: E402
 
 import facid                                                # noqa: E402
 from facid import calibrate as cal                          # noqa: E402
-from facid.config import DATA_DIR, OUT_DIR                   # noqa: E402
+from facid.config import CORPUS_DIR, DATA_DIR, OUT_DIR        # noqa: E402
 from facid.dependencia import estructura, jackknife_por_persona  # noqa: E402
 from facid.harness import (                                 # noqa: E402
     ManifestError, cargar_manifiesto, descubrir_personas, imagenes_unicas,
@@ -507,3 +508,184 @@ def mover_foto(p: PeticionMoverFoto) -> dict[str, Any]:
     origen.rename(destino)
     nueva_ruta = destino.relative_to(DATA_DIR.resolve()).as_posix()
     return {"movido": True, "de": p.ruta, "a": nueva_ruta}
+
+
+@app.post("/api/subir-fotos")
+async def subir_fotos(
+    persona: str = Form(...),
+    archivos: list[UploadFile] = File(...),
+) -> dict[str, Any]:
+    """El "dropbox" de Run: guarda fotos subidas desde el browser en
+    data/<persona>/. Mismo destino que usa Labs — una carpeta es una persona
+    en todo el proyecto, sin convencion aparte solo para Run.
+    """
+    if "/" in persona or "\\" in persona or persona in ("", ".", ".."):
+        raise HTTPException(400, f"nombre de persona invalido: {persona!r}")
+
+    destino_dir = _dentro(DATA_DIR, persona)
+    destino_dir.mkdir(parents=True, exist_ok=True)
+
+    guardadas = []
+    for archivo in archivos:
+        nombre = Path(archivo.filename or "").name  # descarta cualquier ruta
+        ext = Path(nombre).suffix.lower()
+        if ext not in EXT_IMG:
+            raise HTTPException(415, f"no es una imagen soportada: {nombre!r}")
+        stem = Path(nombre).stem
+        destino = destino_dir / nombre
+        # Sufijo numerico en colision, no un rechazo: es un dropbox de
+        # subida, no un rename explicito — preservar las tres fotos que
+        # arrastraste importa mas que el nombre exacto de cada una.
+        n = 1
+        while destino.exists():
+            n += 1
+            destino = destino_dir / f"{stem}_{n}{ext}"
+        destino.write_bytes(await archivo.read())
+        guardadas.append(destino.relative_to(DATA_DIR.resolve()).as_posix())
+
+    return {"persona": persona, "guardadas": guardadas}
+
+
+# ---------------------------------------------------------------------------
+# Run: busqueda 1:N contra un corpus externo grande (ver facid/busqueda.py).
+# Distinto de Labs: ahi se calibra un threshold sobre pares CON etiqueta
+# conocida; aqui se busca si una persona de referencia aparece en un corpus
+# enorme y sin clasificar. El corpus nunca se copia ni se sirve mas que de
+# solo lectura (ver /api/corpus/foto, sandboxeado igual que /api/foto).
+# ---------------------------------------------------------------------------
+@app.get("/api/corpus/resumen")
+def corpus_resumen() -> dict[str, Any]:
+    """Conteo BARATO (solo carpetas de primer nivel): el corpus puede tener
+    decenas de miles de fotos, y contarlas todas en cada GET seria lento.
+    El conteo de fotos real aparece al indexar (ahi ya hay que recorrerlas)."""
+    if not CORPUS_DIR.is_dir():
+        return {"existe": False, "corpus_dir": str(CORPUS_DIR), "n_carpetas": 0}
+    n_carpetas = sum(1 for p in CORPUS_DIR.iterdir() if p.is_dir())
+    return {"existe": True, "corpus_dir": str(CORPUS_DIR), "n_carpetas": n_carpetas}
+
+
+@app.get("/api/corpus/foto")
+def corpus_foto(ruta: str = Query(..., description="Ruta relativa al corpus")):
+    destino = _dentro(CORPUS_DIR, ruta)
+    if not destino.is_file():
+        raise HTTPException(404, f"no existe: {ruta}")
+    tipo = TIPO_IMG.get(destino.suffix.lower())
+    if tipo is None:
+        raise HTTPException(415, f"no es una imagen soportada: {destino.suffix}")
+    return FileResponse(destino, media_type=tipo)
+
+
+class PeticionIndexarCorpus(BaseModel):
+    limite_carpetas: int | None = None
+    limite_por_carpeta: int | None = None
+    device: str = "cuda"
+    face_policy: str = "strict"
+    allow_cpu_fallback: bool = True
+
+
+# Mismo patron que _corrida_lock/_corrida_estado: hilo aparte + dict con lock
+# para que /api/corpus/indexar/estado pueda sondear avance sobre un corpus
+# que puede tardar horas. Job independiente de _corrida_estado a proposito
+# — indexar el corpus y correr un manifiesto de Labs son cosas distintas que
+# no tiene sentido bloquearse mutuamente.
+_indexar_lock = threading.Lock()
+_indexar_estado: dict[str, Any] = {
+    "en_curso": False,
+    "etapa": "",  # "cargando_modelo" | "indexando" | ""
+    "actual": 0,
+    "total": 0,
+    "archivo": "",
+    "resultado": None,
+    "error": None,
+}
+
+
+@app.post("/api/corpus/indexar")
+def corpus_indexar(p: PeticionIndexarCorpus) -> dict[str, Any]:
+    """Arranca la indexacion en segundo plano. Sondea /api/corpus/indexar/estado."""
+    with _indexar_lock:
+        if _indexar_estado["en_curso"]:
+            raise HTTPException(409, "Ya hay una indexacion en curso.")
+        _indexar_estado.update({
+            "en_curso": True, "etapa": "cargando_modelo",
+            "actual": 0, "total": 0, "archivo": "", "resultado": None, "error": None,
+        })
+
+    def _reportar(actual: int, total: int, archivo: str, etapa: str) -> None:
+        with _indexar_lock:
+            _indexar_estado.update(
+                {"etapa": etapa, "actual": actual, "total": total, "archivo": archivo})
+
+    def _trabajo() -> None:
+        try:
+            from facid.busqueda import indexar_corpus
+            from facid.runtime import load_runtime
+            rt = load_runtime(device=p.device,
+                              require_gpu=False if p.allow_cpu_fallback else None,
+                              verbose=False)
+            resultado = indexar_corpus(
+                CORPUS_DIR, rt,
+                limite_carpetas=p.limite_carpetas, limite_por_carpeta=p.limite_por_carpeta,
+                face_policy=p.face_policy, on_progreso=_reportar)
+            with _indexar_lock:
+                _indexar_estado["resultado"] = resultado
+        except Exception as exc:
+            with _indexar_lock:
+                _indexar_estado["error"] = f"{type(exc).__name__}: {exc}"
+        finally:
+            with _indexar_lock:
+                _indexar_estado["en_curso"] = False
+
+    threading.Thread(target=_trabajo, daemon=True).start()
+    with _indexar_lock:
+        return dict(_indexar_estado)
+
+
+@app.get("/api/corpus/indexar/estado")
+def corpus_indexar_estado() -> dict[str, Any]:
+    with _indexar_lock:
+        return dict(_indexar_estado)
+
+
+class PeticionBuscarCorpus(BaseModel):
+    persona: str  # carpeta en data/ cuyas fotos son la consulta
+    limite_carpetas: int | None = None
+    limite_por_carpeta: int | None = None
+    face_policy: str = "strict"
+    top_n: int = 15
+    device: str = "cuda"
+    allow_cpu_fallback: bool = True
+
+
+@app.post("/api/corpus/buscar")
+def corpus_buscar(p: PeticionBuscarCorpus) -> dict[str, Any]:
+    """Compara las fotos de `persona` contra lo que YA esta indexado del
+    corpus. Sincrono (no hilo aparte): solo extrae las pocas fotos de
+    consulta si hiciera falta, y compara contra cache — rapido incluso con
+    el corpus completo indexado.
+    """
+    persona_dir = _dentro(DATA_DIR, p.persona)
+    if not persona_dir.is_dir():
+        raise HTTPException(404, f"no existe la persona: {p.persona}")
+    fotos = sorted(f for f in persona_dir.iterdir()
+                   if f.is_file() and f.suffix.lower() in EXT_IMG)
+    if not fotos:
+        raise HTTPException(400, f"{p.persona} no tiene fotos")
+
+    from facid.busqueda import buscar
+    from facid.runtime import load_runtime
+    try:
+        rt = load_runtime(device=p.device,
+                          require_gpu=False if p.allow_cpu_fallback else None,
+                          verbose=False)
+        resultado = buscar(
+            fotos, CORPUS_DIR, rt,
+            limite_carpetas=p.limite_carpetas, limite_por_carpeta=p.limite_por_carpeta,
+            face_policy=p.face_policy, top_n=p.top_n)
+    except Exception as exc:
+        raise HTTPException(500, f"{type(exc).__name__}: {exc}") from exc
+
+    for r in resultado["resultados"]:
+        for c in r["coincidencias"]:
+            c["ruta"] = f"{c['persona']}/{c['archivo']}"
+    return resultado
