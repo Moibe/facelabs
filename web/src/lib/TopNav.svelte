@@ -2,10 +2,13 @@
 	// Barra superior "de vidrio" con tilt 3D al pasar el mouse (parallax).
 	// Se calcula la posición relativa del cursor (-1..1 en cada eje) y la barra
 	// se inclina suavemente hacia él; vuelve a plano al salir (transition).
+	import { page } from '$app/state';
 	import { estado, cargar } from '$lib/estado.svelte';
 
 	let tiltX = $state(0);
 	let tiltY = $state(0);
+
+	const enRun = $derived(page.url.pathname.startsWith('/run'));
 
 	function handleMove(e: MouseEvent) {
 		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -35,6 +38,11 @@
 	</a>
 
 	<div class="lema">verificación 1:1 · research, no comercial</div>
+
+	<nav class="secciones" aria-label="Secciones">
+		<a href="/set" class="seccion" aria-current={!enRun ? 'page' : undefined}>Labs</a>
+		<a href="/run" class="seccion" aria-current={enRun ? 'page' : undefined}>Run</a>
+	</nav>
 
 	<div class="spacer"></div>
 
@@ -123,6 +131,37 @@
 		font-size: 0.82rem;
 		color: rgba(255, 255, 255, 0.62);
 		letter-spacing: 0.01em;
+	}
+
+	.secciones {
+		display: flex;
+		gap: 0.3rem;
+		margin-left: 1.5rem;
+	}
+
+	.seccion {
+		padding: 0.4rem 0.9rem;
+		border-radius: 999px;
+		font-size: 0.86rem;
+		font-weight: 600;
+		color: rgba(255, 255, 255, 0.62);
+		text-decoration: none;
+		border: 1px solid transparent;
+		transition:
+			background 0.18s ease,
+			border-color 0.18s ease,
+			color 0.18s ease;
+	}
+
+	.seccion:hover {
+		color: rgba(255, 255, 255, 0.92);
+		background: rgba(255, 255, 255, 0.06);
+	}
+
+	.seccion[aria-current='page'] {
+		color: #fff;
+		background: rgba(37, 99, 235, 0.28);
+		border-color: rgba(147, 197, 253, 0.5);
 	}
 
 	.spacer {

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { page } from '$app/state';
 	import favicon from '$lib/assets/favicon.svg';
 	import Sidebar from '$lib/Sidebar.svelte';
 	import TopNav from '$lib/TopNav.svelte';
@@ -7,6 +8,11 @@
 
 	let { children } = $props();
 	let collapsed = $state(false);
+
+	// "Run" es su propia sección, sin relación con las páginas de Labs (El set /
+	// Entorno / Pares / Panorama) — el sidebar de esas 4 no aplica ahí, así que
+	// no se muestra en vez de mostrar links que no llevan a nada relevante.
+	const enRun = $derived(page.url.pathname.startsWith('/run'));
 
 	// Una sola carga al arrancar; las páginas leen del estado compartido.
 	$effect(() => {
@@ -40,8 +46,10 @@
 </svelte:head>
 
 <TopNav />
-<Sidebar {collapsed} {toggleCollapsed} />
-<main class={collapsed ? 'collapsed' : ''}>
+{#if !enRun}
+	<Sidebar {collapsed} {toggleCollapsed} />
+{/if}
+<main class={collapsed || enRun ? 'collapsed' : ''}>
 	<div class="work-scroll">
 		{#if estado.apiCaida}
 			<!-- Estado de primera clase, no un error escondido en consola: el caso
