@@ -302,8 +302,27 @@ def _nota_de(path: Path) -> str:
     return " ".join(partes) if partes else stem
 
 
+def _filtrar_excluidas(personas: dict[str, list[Path]], data_dir: str | Path,
+                       excluir: set[str]) -> dict[str, list[Path]]:
+    """Quita del descubrimiento las fotos marcadas como excluidas.
+
+    `excluir` son rutas relativas a `data_dir` en POSIX (el mismo formato que
+    devuelve /api/personas), no rutas absolutas ni relativas al manifiesto:
+    asi el front no tiene que saber nada de donde vive el manifiesto para
+    marcar una foto.
+    """
+    raiz = Path(data_dir).resolve()
+    filtradas: dict[str, list[Path]] = {}
+    for nombre, fotos in personas.items():
+        quedan = [f for f in fotos if f.resolve().relative_to(raiz).as_posix() not in excluir]
+        if quedan:
+            filtradas[nombre] = quedan
+    return filtradas
+
+
 def init_manifest(data_dir: str | Path, salida: str | Path, *,
-                  modo: str = MODO_ANCLA, verbose: bool = True) -> dict[str, Any]:
+                  modo: str = MODO_ANCLA, excluir: set[str] | None = None,
+                  verbose: bool = True) -> dict[str, Any]:
     """Escribe un manifiesto deduciendo las etiquetas de las carpetas.
 
     misma carpeta  -> same_person: true
@@ -316,14 +335,21 @@ def init_manifest(data_dir: str | Path, salida: str | Path, *,
         agregar informacion nueva (salen de las mismas fotos), asi que estrecha
         los intervalos de confianza sin justificarlo. Usalo para explorar, no
         para reportar un threshold.
+
+    `excluir`: fotos (ruta relativa a data_dir, POSIX) que se ignoran como si
+    no estuvieran en data/. Pensado para probar subconjuntos sin mover ni
+    borrar archivos — ver el picker de El set en el front.
     """
     if modo not in (MODO_ANCLA, MODO_TODOS):
         raise ManifestError(f"modo invalido: {modo!r} (usa '{MODO_ANCLA}' o '{MODO_TODOS}')")
 
     personas = descubrir_personas(data_dir)
+    if excluir:
+        personas = _filtrar_excluidas(personas, data_dir, excluir)
     if not personas:
         raise ManifestError(
-            f"No encontre ninguna subcarpeta con imagenes en {data_dir}. "
+            f"No encontre ninguna subcarpeta con imagenes en {data_dir}"
+            + (" despues de aplicar las exclusiones" if excluir else "") + ". "
             f"Esperaba algo como {data_dir}/<persona>/foto.jpg "
             f"(extensiones: {', '.join(EXTENSIONES)})")
 

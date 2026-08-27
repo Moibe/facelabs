@@ -1,11 +1,13 @@
 <script lang="ts">
 	import { api, type Personas } from '$lib/api';
-	import { estado } from '$lib/estado.svelte';
+	import { estado, restaurarFotosExcluidas, toggleFotoExcluida } from '$lib/estado.svelte';
 
 	const d = $derived(estado.datos);
 
 	let personas = $state<Personas | null>(null);
 	let cargandoP = $state(true);
+
+	const nExcluidas = $derived(Object.keys(estado.fotosExcluidas).length);
 
 	$effect(() => {
 		api
@@ -154,13 +156,36 @@
 			{personas.n_personas} personas · {personas.n_fotos} fotos ·
 			<code>{personas.data_dir}</code>
 		</p>
+		<p class="tenue">
+			Clic en la palomita para sacar o meter una foto de la <strong>siguiente</strong> corrida —
+			no toca nada en disco, sólo lo que "Generar manifiesto" (en Entorno) va a usar.
+			{#if nExcluidas > 0}
+				<strong>{nExcluidas}</strong> excluida(s).
+				<button type="button" class="enlace" onclick={restaurarFotosExcluidas}
+					>Incluir todas de nuevo</button
+				>
+			{/if}
+		</p>
 		{#each personas.personas as p (p.persona)}
 			<div class="persona">
 				<h3>{p.persona} <span class="tenue">· {p.n_fotos} foto(s)</span></h3>
 				<div class="tira">
 					{#each p.fotos as f (f.ruta)}
-						<figure>
+						{@const excluida = !!estado.fotosExcluidas[f.ruta]}
+						<figure class:excluida>
 							<img src={api.urlFoto(f.ruta)} alt={f.nombre} loading="lazy" />
+							<button
+								type="button"
+								class="chk"
+								class:activo={!excluida}
+								aria-pressed={!excluida}
+								title={excluida
+									? 'Excluida de la siguiente corrida — clic para incluirla'
+									: 'Incluida en la siguiente corrida — clic para excluirla'}
+								onclick={() => toggleFotoExcluida(f.ruta)}
+							>
+								✓
+							</button>
 							<figcaption>{f.nombre}</figcaption>
 						</figure>
 					{/each}
@@ -241,6 +266,7 @@
 	}
 
 	figure {
+		position: relative;
 		margin: 0;
 		flex: 0 0 96px;
 		display: flex;
@@ -256,6 +282,14 @@
 		border: 1px solid rgba(255, 255, 255, 0.14);
 		background: rgba(0, 0, 0, 0.35);
 		display: block;
+		transition:
+			opacity 0.15s ease,
+			filter 0.15s ease;
+	}
+
+	figure.excluida img {
+		opacity: 0.35;
+		filter: grayscale(70%);
 	}
 
 	figcaption {
@@ -266,5 +300,59 @@
 		text-overflow: ellipsis;
 		white-space: nowrap;
 		width: 96px;
+	}
+
+	figure.excluida figcaption {
+		text-decoration: line-through;
+		opacity: 0.6;
+	}
+
+	.chk {
+		position: absolute;
+		top: 4px;
+		right: 4px;
+		width: 20px;
+		height: 20px;
+		padding: 0;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		border-radius: 999px;
+		border: 1.5px solid rgba(255, 255, 255, 0.6);
+		background: rgba(10, 25, 70, 0.65);
+		color: transparent;
+		font-size: 0.68rem;
+		line-height: 1;
+		cursor: pointer;
+		transition:
+			background 0.15s ease,
+			border-color 0.15s ease,
+			color 0.15s ease;
+	}
+
+	.chk:hover {
+		border-color: #fff;
+	}
+
+	.chk.activo {
+		background: var(--bien);
+		border-color: var(--bien);
+		color: #06301a;
+	}
+
+	.enlace {
+		font: inherit;
+		font-size: inherit;
+		color: #93c5fd;
+		background: none;
+		border: none;
+		padding: 0;
+		margin-left: 0.3rem;
+		cursor: pointer;
+		text-decoration: underline;
+	}
+
+	.enlace:hover {
+		color: #bfdbfe;
 	}
 </style>

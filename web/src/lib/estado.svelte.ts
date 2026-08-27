@@ -6,6 +6,29 @@
 
 import { ApiCaida, api, type Resultados } from './api';
 
+// Fotos que el usuario sacó de la siguiente corrida (picker en "El set"), por
+// ruta relativa a data/. Vive en localStorage y no en el API: es una
+// preferencia de ESTE browser para probar subconjuntos sin tocar data/ ni
+// pedirle nada al backend hasta que de verdad se genere un manifiesto.
+const LS_EXCLUIDAS = 'facid.fotosExcluidas';
+
+function leerExcluidasGuardadas(): Record<string, true> {
+	try {
+		const cruda = localStorage.getItem(LS_EXCLUIDAS);
+		return cruda ? JSON.parse(cruda) : {};
+	} catch {
+		return {};
+	}
+}
+
+function guardarExcluidas(v: Record<string, true>): void {
+	try {
+		localStorage.setItem(LS_EXCLUIDAS, JSON.stringify(v));
+	} catch {
+		// privado o cuota llena: se pierde al recargar, no es critico
+	}
+}
+
 export const estado = $state({
 	csv: 'scores.csv',
 	/** Lista de CSVs disponibles en out/. */
@@ -19,8 +42,21 @@ export const estado = $state({
 	error: null as string | null,
 	/** true = uvicorn no está arriba. Es un problema distinto y se resuelve distinto. */
 	apiCaida: false,
-	versionApi: null as string | null
+	versionApi: null as string | null,
+	/** ruta (relativa a data/) -> true, sólo para las excluidas. */
+	fotosExcluidas: leerExcluidasGuardadas()
 });
+
+export function toggleFotoExcluida(ruta: string): void {
+	if (estado.fotosExcluidas[ruta]) delete estado.fotosExcluidas[ruta];
+	else estado.fotosExcluidas[ruta] = true;
+	guardarExcluidas(estado.fotosExcluidas);
+}
+
+export function restaurarFotosExcluidas(): void {
+	estado.fotosExcluidas = {};
+	guardarExcluidas(estado.fotosExcluidas);
+}
 
 export async function cargarCsvs(): Promise<void> {
 	try {

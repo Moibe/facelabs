@@ -540,6 +540,28 @@ def test_init_manifest():
     except ManifestError:
         check(True, "modo invalido lanza ManifestError")
 
+    # --- excluir: probar subconjuntos sin tocar disco (picker de El set) ---
+    r3 = init_manifest(d / "data", d / "manifests" / "sin_p1_03.json",
+                       excluir={"p1/03_foto.jpg"}, verbose=False)
+    check(r3["match"] == 2 and r3["nonmatch"] == 3,
+          f"excluir una foto no-ancla de p1 quita 1 match y no toca non-match "
+          f"(dio {r3['match']}/{r3['nonmatch']})")
+
+    r4 = init_manifest(d / "data", d / "manifests" / "sin_p3.json",
+                       excluir={"p3/01_foto.jpg"}, verbose=False)
+    check(r4["n_personas"] == 2,
+          "excluir la unica foto de una persona la saca del manifiesto entero")
+    check(r4["nonmatch"] == 1,
+          f"sin p3 solo queda el par p1-p2 (dio {r4['nonmatch']})")
+
+    todas = {f"{p}/{i:02d}_foto.jpg" for p, n in plan.items() for i in range(1, n + 1)}
+    try:
+        init_manifest(d / "data", d / "manifests" / "todo_fuera.json",
+                      excluir=todas, verbose=False)
+        check(False, "excluir todas las fotos debe dejar el manifiesto vacio y lanzar")
+    except ManifestError:
+        check(True, "excluir todas las fotos -> ManifestError, igual que un data/ vacio")
+
 
 # ================================================== 8. provider en el reporte
 def _csv_min(destino, provs=None):

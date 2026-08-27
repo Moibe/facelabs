@@ -252,10 +252,10 @@ export const api = {
 	entorno: (device = 'cuda') => pedir<Entorno>('/api/entorno', { device }),
 	store: () => pedir<Record<string, unknown>>('/api/store'),
 
-	crearManifiesto: (salida: string, modo: 'ancla' | 'todos') =>
+	crearManifiesto: (salida: string, modo: 'ancla' | 'todos', excluir: string[] = []) =>
 		enviar<{ pares: number; match: number; nonmatch: number; n_personas: number }>(
 			'/api/manifiesto',
-			{ salida, modo }
+			{ salida, modo, excluir }
 		),
 	// La corrida arranca en segundo plano; correr() sólo la dispara y devuelve
 	// el estado inicial. corridaEstado() es lo que hay que sondear para saber

@@ -3,7 +3,7 @@
 	// tardar; no se pide solo al abrir la app para no bloquear todo lo demás.
 	import { goto } from '$app/navigation';
 	import { api, type CorridaEstado, type Entorno } from '$lib/api';
-	import { cargarCsvs, cargar as cargarResultados } from '$lib/estado.svelte';
+	import { cargarCsvs, cargar as cargarResultados, estado } from '$lib/estado.svelte';
 
 	let datos = $state<Entorno | null>(null);
 	let cargando = $state(false);
@@ -55,12 +55,18 @@
 		return Math.round((progreso.actual / progreso.total) * 100);
 	});
 
+	const nExcluidas = $derived(Object.keys(estado.fotosExcluidas).length);
+
 	async function generarManifiesto() {
 		generando = true;
 		falloAccion = null;
 		resumenManifiesto = null;
 		try {
-			resumenManifiesto = await api.crearManifiesto(manifiesto, modoManifiesto);
+			resumenManifiesto = await api.crearManifiesto(
+				manifiesto,
+				modoManifiesto,
+				Object.keys(estado.fotosExcluidas)
+			);
 		} catch (e) {
 			falloAccion = e instanceof Error ? e.message : String(e);
 		} finally {
@@ -112,6 +118,10 @@
 		Cambiaste fotos en <code>data/</code>: primero regenera el manifiesto (lee las carpetas de
 		nuevo), luego córrelo (extrae y compara). Equivale a <code>facid init-manifest</code> +
 		<code>facid run-manifest</code> desde la terminal.
+		{#if nExcluidas > 0}
+			<strong>{nExcluidas}</strong> foto(s) excluida(s) del próximo manifiesto — ajústalo en
+			<a class="enlace" href="/set">El set</a>.
+		{/if}
 	</p>
 	<div class="controles">
 		<label>

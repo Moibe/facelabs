@@ -267,6 +267,7 @@ def test_cors():
         "http://localhost:5173", "http://127.0.0.1:5173",
         "http://localhost:5174", "http://localhost:5179",
         "http://localhost:4173", "http://127.0.0.1:4179",
+        "http://localhost:1000", "http://127.0.0.1:1000",  # puerto fijo del proyecto
     ]
     for origen in permitidos:
         r = cli.get("/api/personas", headers={"Origin": origen})
@@ -279,6 +280,7 @@ def test_cors():
         "https://localhost:5173",          # https no, el dev server es http
         "http://localhost.evil.com:5173",   # sufijo pegado al hostname
         "http://127.0.0.1:8080",
+        "http://localhost:1100",            # fuera del rango 10xx
     ]
     fugas = [o for o in negados
              if cli.get("/api/personas", headers={"Origin": o})

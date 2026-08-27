@@ -46,16 +46,19 @@ app = FastAPI(
 )
 
 # El dev server de Vite corre en otro puerto, y NO siempre en el mismo: si el
-# 5173 esta ocupado se mueve al 5174, 5175... Con una lista fija de origenes, ese
-# corrimiento hace que el browser bloquee cada llamada por CORS, y en pantalla se
-# ve igual que "el API esta apagada" — un rato perdido persiguiendo el error
-# equivocado. Por eso se cubre el rango con regex en vez de enumerar puertos.
+# configurado esta ocupado se mueve al siguiente... Con una lista fija de
+# origenes, ese corrimiento hace que el browser bloquee cada llamada por CORS,
+# y en pantalla se ve igual que "el API esta apagada" — un rato perdido
+# persiguiendo el error equivocado. Por eso se cubre el rango con regex en vez
+# de enumerar puertos. 10xx es el puerto fijo de este proyecto (ver
+# web/vite.config.ts); 41xx/51xx son los defaults de Vite/preview por si
+# alguien corre `vite dev` suelto sin el config.
 #
 # Solo localhost/127.0.0.1: una pagina remota nunca tiene ese origen, asi que no
 # puede llegarle a este API aunque conozca el puerto.
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=r"^http://(localhost|127\.0\.0\.1):(41[7-9]\d|51[7-9]\d)$",
+    allow_origin_regex=r"^http://(localhost|127\.0\.0\.1):(41[7-9]\d|51[7-9]\d|10\d\d)$",
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
@@ -367,13 +370,17 @@ def store_resumen() -> dict[str, Any]:
 class PeticionManifiesto(BaseModel):
     salida: str = "mi_set.json"
     modo: str = "ancla"
+    # Rutas relativas a data/ (formato de /api/personas) a tratar como si no
+    # estuvieran: el picker de fotos de "El set" en el front.
+    excluir: list[str] = []
 
 
 @app.post("/api/manifiesto")
 def crear_manifiesto(p: PeticionManifiesto) -> dict[str, Any]:
     destino = _dentro(REPO / "manifests", p.salida)
     try:
-        return init_manifest(DATA_DIR, destino, modo=p.modo, verbose=False)
+        return init_manifest(DATA_DIR, destino, modo=p.modo,
+                             excluir=set(p.excluir) or None, verbose=False)
     except ManifestError as exc:
         raise HTTPException(400, str(exc)) from exc
 
