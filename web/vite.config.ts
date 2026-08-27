@@ -3,6 +3,11 @@ import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
 
 export default defineConfig({
+	// Fijo en vez del 5173 default. strictPort: false porque si algun dia esta
+	// ocupado, preferimos que Vite corra en otro puerto avisando en consola a
+	// que la sesion de dev truene — el CORS del API igual lo bloquearia y se
+	// veria como "API apagada" hasta que alguien ajuste el regex de nuevo.
+	server: { port: 1000, strictPort: false },
 	plugins: [
 		sveltekit({
 			compilerOptions: {
