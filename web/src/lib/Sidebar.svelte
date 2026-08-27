@@ -17,10 +17,10 @@
 	let sidebarWidth = $state(240);
 
 	const secciones = [
-		{ href: '/', etiqueta: 'Panorama' },
-		{ href: '/pares', etiqueta: 'Pares' },
 		{ href: '/set', etiqueta: 'El set' },
-		{ href: '/entorno', etiqueta: 'Entorno' }
+		{ href: '/entorno', etiqueta: 'Entorno' },
+		{ href: '/pares', etiqueta: 'Pares' },
+		{ href: '/', etiqueta: 'Panorama' }
 	];
 
 	const actual = $derived(page.url.pathname);
