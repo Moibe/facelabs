@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { api, type Par } from '$lib/api';
-	import { estado, fijarThreshold, veredicto } from '$lib/estado.svelte';
+	import { estado, fijarThreshold, objectPosition, veredicto } from '$lib/estado.svelte';
 
 	const d = $derived(estado.datos);
 
@@ -115,7 +115,12 @@
 						{@const raw = i === 0 ? par.img_a : par.img_b}
 						<figure>
 							{#if foto}
-								<img src={api.urlFoto(foto)} alt={nombreCorto(raw)} loading="lazy" />
+								<img
+									src={api.urlFoto(foto)}
+									alt={nombreCorto(raw)}
+									loading="lazy"
+									style="object-position: {objectPosition(foto)}"
+								/>
 							{:else}
 								<div class="sin-foto" title={raw}>sin<br />archivo</div>
 							{/if}
@@ -169,7 +174,12 @@
 								{@const err = j === 0 ? x.error_a : x.error_b}
 								<figure>
 									{#if foto}
-										<img src={api.urlFoto(foto)} alt={nombreCorto(raw)} loading="lazy" />
+										<img
+										src={api.urlFoto(foto)}
+										alt={nombreCorto(raw)}
+										loading="lazy"
+										style="object-position: {objectPosition(foto)}"
+									/>
 									{:else}
 										<div class="sin-foto" title={raw}>sin<br />archivo</div>
 									{/if}

@@ -29,6 +29,33 @@ function guardarExcluidas(v: Record<string, true>): void {
 	}
 }
 
+// Encuadre por foto: qué parte se ve dentro de una miniatura recortada con
+// object-fit:cover. Mismo tratamiento que fotosExcluidas — preferencia de
+// ESTE browser, en localStorage, no un dato que el backend necesite conocer.
+// La clave es la misma ruta relativa a data/ que ya usan /api/personas y
+// /api/resultados (foto_a/foto_b), así que un encuadre fijado en "El set" se
+// respeta también en "Pares" sin traducir nada.
+const LS_RECORTES = 'facid.recortes';
+
+export type Recorte = { x: number; y: number }; // porcentajes 0..100, como object-position
+
+function leerRecortesGuardados(): Record<string, Recorte> {
+	try {
+		const cruda = localStorage.getItem(LS_RECORTES);
+		return cruda ? JSON.parse(cruda) : {};
+	} catch {
+		return {};
+	}
+}
+
+function guardarRecortes(v: Record<string, Recorte>): void {
+	try {
+		localStorage.setItem(LS_RECORTES, JSON.stringify(v));
+	} catch {
+		// privado o cuota llena: se pierde al recargar, no es critico
+	}
+}
+
 export const estado = $state({
 	csv: 'scores.csv',
 	/** Lista de CSVs disponibles en out/. */
@@ -44,7 +71,9 @@ export const estado = $state({
 	apiCaida: false,
 	versionApi: null as string | null,
 	/** ruta (relativa a data/) -> true, sólo para las excluidas. */
-	fotosExcluidas: leerExcluidasGuardadas()
+	fotosExcluidas: leerExcluidasGuardadas(),
+	/** ruta (relativa a data/) -> encuadre de la miniatura. Sin entrada = centro. */
+	recortes: leerRecortesGuardados() as Record<string, Recorte>
 });
 
 export function toggleFotoExcluida(ruta: string): void {
@@ -56,6 +85,22 @@ export function toggleFotoExcluida(ruta: string): void {
 export function restaurarFotosExcluidas(): void {
 	estado.fotosExcluidas = {};
 	guardarExcluidas(estado.fotosExcluidas);
+}
+
+export function fijarRecorte(ruta: string, x: number, y: number): void {
+	estado.recortes[ruta] = { x, y };
+	guardarRecortes(estado.recortes);
+}
+
+export function restaurarRecorte(ruta: string): void {
+	delete estado.recortes[ruta];
+	guardarRecortes(estado.recortes);
+}
+
+/** object-position CSS listo para usar; centro si la foto nunca se movió. */
+export function objectPosition(ruta: string): string {
+	const r = estado.recortes[ruta];
+	return r ? `${r.x}% ${r.y}%` : '50% 50%';
 }
 
 export async function cargarCsvs(): Promise<void> {

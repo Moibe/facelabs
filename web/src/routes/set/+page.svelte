@@ -1,6 +1,12 @@
 <script lang="ts">
 	import { api, type Personas } from '$lib/api';
-	import { estado, restaurarFotosExcluidas, toggleFotoExcluida } from '$lib/estado.svelte';
+	import { arrastrarRecorte } from '$lib/arrastrar-recorte';
+	import {
+		estado,
+		objectPosition,
+		restaurarFotosExcluidas,
+		toggleFotoExcluida
+	} from '$lib/estado.svelte';
 
 	const d = $derived(estado.datos);
 
@@ -158,7 +164,8 @@
 		</p>
 		<p class="tenue">
 			Clic en la palomita para sacar o meter una foto de la <strong>siguiente</strong> corrida —
-			no toca nada en disco, sólo lo que "Generar manifiesto" (en Entorno) va a usar.
+			no toca nada en disco, sólo lo que "Generar manifiesto" (en Entorno) va a usar. Arrastra la
+			imagen para recentrar qué parte se ve en la miniatura (doble clic para restaurar el centro).
 			{#if nExcluidas > 0}
 				<strong>{nExcluidas}</strong> excluida(s).
 				<button type="button" class="enlace" onclick={restaurarFotosExcluidas}
@@ -173,7 +180,15 @@
 					{#each p.fotos as f (f.ruta)}
 						{@const excluida = !!estado.fotosExcluidas[f.ruta]}
 						<figure class:excluida>
-							<img src={api.urlFoto(f.ruta)} alt={f.nombre} loading="lazy" />
+							<img
+								src={api.urlFoto(f.ruta)}
+								alt={f.nombre}
+								loading="lazy"
+								draggable="false"
+								style="object-position: {objectPosition(f.ruta)}"
+								title="Arrastra para recentrar · doble clic para restaurar"
+								use:arrastrarRecorte={f.ruta}
+							/>
 							<button
 								type="button"
 								class="chk"
@@ -282,6 +297,10 @@
 		border: 1px solid rgba(255, 255, 255, 0.14);
 		background: rgba(0, 0, 0, 0.35);
 		display: block;
+		cursor: grab;
+		touch-action: none;
+		user-select: none;
+		-webkit-user-drag: none;
 		transition:
 			opacity 0.15s ease,
 			filter 0.15s ease;
@@ -290,6 +309,10 @@
 	figure.excluida img {
 		opacity: 0.35;
 		filter: grayscale(70%);
+	}
+
+	img:global(.arrastrando-recorte) {
+		cursor: grabbing;
 	}
 
 	figcaption {
