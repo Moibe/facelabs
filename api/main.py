@@ -9,9 +9,10 @@ usa la CLI.
 Consecuencia practica: si un numero del front no cuadra con el de la terminal,
 es un bug de serializacion, nunca dos implementaciones que se separaron.
 
-Solo lectura salvo dos POST explicitos (generar manifiesto / correr una corrida).
-Escucha en 127.0.0.1 y nada mas: esto procesa fotos de personas que dieron
-consentimiento para un experimento, no para exponer un puerto.
+Solo lectura salvo tres POST explicitos (generar manifiesto / correr una
+corrida / mover una foto entre personas). Escucha en 127.0.0.1 y nada mas:
+esto procesa fotos de personas que dieron consentimiento para un experimento,
+no para exponer un puerto.
 """
 
 from __future__ import annotations
@@ -468,3 +469,41 @@ def corrida_estado() -> dict[str, Any]:
     """Lo que el front sondea para pintar la barra de progreso."""
     with _corrida_lock:
         return dict(_corrida_estado)
+
+
+class PeticionMoverFoto(BaseModel):
+    ruta: str              # relativa a data/, ej "otra_1/LauTokyo.png"
+    persona_destino: str   # nombre de carpeta, ej "yo" — NO una ruta
+
+
+@app.post("/api/mover-foto")
+def mover_foto(p: PeticionMoverFoto) -> dict[str, Any]:
+    """Reclasifica una foto arrastrandola de una persona a otra en el front.
+
+    Es un rename real dentro de data/, no una preferencia de browser como el
+    picker o el recorte: el nombre de la carpeta ES la identidad (ver
+    descubrir_personas), asi que "mover" una foto a otra persona significa
+    literalmente moverla de carpeta.
+    """
+    if "/" in p.persona_destino or "\\" in p.persona_destino or p.persona_destino in ("", ".", ".."):
+        raise HTTPException(400, f"nombre de persona invalido: {p.persona_destino!r}")
+
+    origen = _dentro(DATA_DIR, p.ruta)
+    if not origen.is_file():
+        raise HTTPException(404, f"no existe: {p.ruta}")
+
+    destino_dir = _dentro(DATA_DIR, p.persona_destino)
+    destino = destino_dir / origen.name
+
+    if destino.resolve() == origen.resolve():
+        return {"movido": False, "motivo": "ya esta en esa persona"}
+    # No se pisa un archivo existente: mejor fallar explicito que perder una
+    # foto porque dos personas usaban el mismo nombre de archivo.
+    if destino.exists():
+        raise HTTPException(
+            409, f"ya existe {origen.name!r} en {p.persona_destino}/ — renombra una de las dos")
+
+    destino_dir.mkdir(parents=True, exist_ok=True)
+    origen.rename(destino)
+    nueva_ruta = destino.relative_to(DATA_DIR.resolve()).as_posix()
+    return {"movido": True, "de": p.ruta, "a": nueva_ruta}

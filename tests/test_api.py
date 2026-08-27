@@ -288,6 +288,46 @@ def test_cors():
     check(not fugas, f"rechaza los origenes que no son el dev server local (fugas: {fugas})")
 
 
+def test_mover_foto():
+    print("\n[api-9] /api/mover-foto — reclasificar arrastrando en El set")
+
+    origen = DATA / "otra_1" / "01.jpg"
+    destino = DATA / "familiar" / "01.jpg"
+    check(origen.is_file() and not destino.exists(), "fixture: arranca sin colision")
+
+    r = cli.post("/api/mover-foto", json={"ruta": "otra_1/01.jpg", "persona_destino": "familiar"})
+    check(r.status_code == 200, f"mueve exitosamente (dio {r.status_code})")
+    j = r.json()
+    check(j["movido"] is True and j["a"] == "familiar/01.jpg", f"reporta la ruta nueva (dio {j})")
+    check(not origen.exists(), "el archivo YA NO esta en la carpeta vieja")
+    check(destino.is_file(), "el archivo SI esta en la carpeta nueva")
+
+    r = cli.post("/api/mover-foto", json={"ruta": "familiar/01.jpg", "persona_destino": "familiar"})
+    check(r.status_code == 200 and r.json()["movido"] is False,
+          "soltar en la misma persona es un no-op, no un error")
+    check(destino.is_file(), "no-op no toca el archivo")
+
+    # Colision: otra_1/01_frontal.jpg ya tiene el mismo nombre que familiar/01_frontal.jpg
+    (DATA / "otra_1" / "01_frontal.jpg").write_bytes(b"dup")
+    r = cli.post("/api/mover-foto",
+                json={"ruta": "familiar/01_frontal.jpg", "persona_destino": "otra_1"})
+    check(r.status_code == 409, f"nombre repetido en el destino -> 409 (dio {r.status_code})")
+    check((DATA / "familiar" / "01_frontal.jpg").is_file(),
+          "la colision NO se resuelve pisando el archivo del destino")
+
+    r = cli.post("/api/mover-foto", json={"ruta": "yo/01_ancla.jpg", "persona_destino": "otra/x"})
+    check(r.status_code == 400, f"persona_destino con '/' se rechaza (dio {r.status_code})")
+
+    r = cli.post("/api/mover-foto",
+                json={"ruta": "yo/no_existe.jpg", "persona_destino": "familiar"})
+    check(r.status_code == 404, f"ruta que no existe -> 404 (dio {r.status_code})")
+
+    r = cli.post("/api/mover-foto",
+                json={"ruta": "../secreto.txt", "persona_destino": "familiar"})
+    check(r.status_code == 400, f"escapar de data/ con '../' se rechaza (dio {r.status_code})")
+    check((TMP / "secreto.txt").is_file(), "el intento de escape no toco el archivo real")
+
+
 def main() -> int:
     print(f"Directorio temporal: {TMP}")
     test_salud()
@@ -298,6 +338,7 @@ def main() -> int:
     test_tasas()
     test_no_rompe_la_cli()
     test_cors()
+    test_mover_foto()
 
     print("\n" + "=" * 60)
     if FALLOS:

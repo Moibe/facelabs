@@ -3,6 +3,7 @@
 	import { arrastrarRecorte } from '$lib/arrastrar-recorte';
 	import {
 		estado,
+		migrarFoto,
 		objectPosition,
 		restaurarFotosExcluidas,
 		toggleFotoExcluida
@@ -14,6 +15,62 @@
 	let cargandoP = $state(true);
 
 	const nExcluidas = $derived(Object.keys(estado.fotosExcluidas).length);
+
+	// ------------------------------------------ mover fotos entre personas
+	// Handle aparte de la imagen a propósito: la imagen ya tiene su propio
+	// gesto de arrastre (recentrar el recorte, via pointer events). Si el
+	// mismo elemento manejara ambos, no habría forma de distinguir "quiero
+	// recentrar" de "quiero mover a otra persona" desde el primer pixel de
+	// movimiento. Éste usa Drag and Drop nativo del browser, que no choca con
+	// los pointer events del recorte porque vive en un elemento separado.
+	let arrastrandoRuta = $state<string | null>(null);
+	let zonaActiva = $state<string | null>(null);
+	let errorMover = $state<string | null>(null);
+
+	function onDragStart(e: DragEvent, ruta: string) {
+		arrastrandoRuta = ruta;
+		errorMover = null;
+		e.dataTransfer?.setData('text/plain', ruta);
+		if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
+	}
+
+	function onDragEndHandle() {
+		arrastrandoRuta = null;
+		zonaActiva = null;
+	}
+
+	function onDragOverPersona(e: DragEvent, persona: string) {
+		if (!arrastrandoRuta) return;
+		e.preventDefault(); // requerido por el browser para permitir soltar aqui
+		zonaActiva = persona;
+	}
+
+	function onDragLeavePersona(persona: string) {
+		if (zonaActiva === persona) zonaActiva = null;
+	}
+
+	async function onDropPersona(e: DragEvent, personaDestino: string) {
+		e.preventDefault();
+		const ruta = arrastrandoRuta ?? e.dataTransfer?.getData('text/plain') ?? null;
+		arrastrandoRuta = null;
+		zonaActiva = null;
+		if (!ruta) return;
+
+		const personaOrigen = ruta.split('/')[0];
+		if (personaOrigen === personaDestino) return; // soltó donde ya estaba
+
+		try {
+			const r = await api.moverFoto(ruta, personaDestino);
+			if (!r.movido) {
+				if (r.motivo) errorMover = r.motivo;
+				return;
+			}
+			migrarFoto(ruta, r.a!);
+			personas = await api.personas(); // recarga: la fuente de verdad es el disco
+		} catch (err) {
+			errorMover = err instanceof Error ? err.message : String(err);
+		}
+	}
 
 	$effect(() => {
 		api
@@ -166,6 +223,8 @@
 			Clic en la palomita para sacar o meter una foto de la <strong>siguiente</strong> corrida —
 			no toca nada en disco, sólo lo que "Generar manifiesto" (en Entorno) va a usar. Arrastra la
 			imagen para recentrar qué parte se ve en la miniatura (doble clic para restaurar el centro).
+			Arrastra el <strong>✥</strong> a otra persona para reclasificar la foto — eso sí mueve el
+			archivo en <code>data/</code>.
 			{#if nExcluidas > 0}
 				<strong>{nExcluidas}</strong> excluida(s).
 				<button type="button" class="enlace" onclick={restaurarFotosExcluidas}
@@ -173,13 +232,23 @@
 				>
 			{/if}
 		</p>
+		{#if errorMover}
+			<p class="tenue error-mover">{errorMover}</p>
+		{/if}
 		{#each personas.personas as p (p.persona)}
-			<div class="persona">
+			<!-- svelte-ignore a11y_no_static_element_interactions -->
+			<div
+				class="persona"
+				class:zona-activa={zonaActiva === p.persona}
+				ondragover={(e) => onDragOverPersona(e, p.persona)}
+				ondragleave={() => onDragLeavePersona(p.persona)}
+				ondrop={(e) => onDropPersona(e, p.persona)}
+			>
 				<h3>{p.persona} <span class="tenue">· {p.n_fotos} foto(s)</span></h3>
 				<div class="tira">
 					{#each p.fotos as f (f.ruta)}
 						{@const excluida = !!estado.fotosExcluidas[f.ruta]}
-						<figure class:excluida>
+						<figure class:excluida class:arrastrando={arrastrandoRuta === f.ruta}>
 							<img
 								src={api.urlFoto(f.ruta)}
 								alt={f.nombre}
@@ -201,6 +270,17 @@
 							>
 								✓
 							</button>
+							<span
+								class="handle-mover"
+								draggable="true"
+								role="button"
+								tabindex="-1"
+								title="Arrastra a otra persona para reclasificar esta foto"
+								ondragstart={(e) => onDragStart(e, f.ruta)}
+								ondragend={onDragEndHandle}
+							>
+								✥
+							</span>
 							<figcaption>{f.nombre}</figcaption>
 						</figure>
 					{/each}
@@ -265,6 +345,21 @@
 
 	.persona {
 		margin-top: 1rem;
+		padding: 0.4rem;
+		border-radius: 12px;
+		border: 1px dashed transparent;
+		transition:
+			border-color 0.15s ease,
+			background 0.15s ease;
+	}
+
+	.persona.zona-activa {
+		border-color: rgba(147, 197, 253, 0.7);
+		background: rgba(147, 197, 253, 0.07);
+	}
+
+	.error-mover {
+		color: var(--mal);
 	}
 
 	h3 {
@@ -309,6 +404,10 @@
 	figure.excluida img {
 		opacity: 0.35;
 		filter: grayscale(70%);
+	}
+
+	figure.arrastrando {
+		opacity: 0.4;
 	}
 
 	img:global(.arrastrando-recorte) {
@@ -361,6 +460,37 @@
 		background: var(--bien);
 		border-color: var(--bien);
 		color: #06301a;
+	}
+
+	.handle-mover {
+		position: absolute;
+		top: 4px;
+		left: 4px;
+		width: 20px;
+		height: 20px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		border-radius: 999px;
+		border: 1.5px solid rgba(255, 255, 255, 0.6);
+		background: rgba(10, 25, 70, 0.65);
+		color: rgba(255, 255, 255, 0.85);
+		font-size: 0.65rem;
+		line-height: 1;
+		cursor: grab;
+		user-select: none;
+		transition:
+			background 0.15s ease,
+			border-color 0.15s ease;
+	}
+
+	.handle-mover:hover {
+		background: rgba(37, 99, 235, 0.55);
+		border-color: #fff;
+	}
+
+	.handle-mover:active {
+		cursor: grabbing;
 	}
 
 	.enlace {

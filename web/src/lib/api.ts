@@ -264,6 +264,15 @@ export const api = {
 		enviar<CorridaEstado>('/api/corrida', { manifiesto, salida_csv, device }),
 	corridaEstado: () => pedir<CorridaEstado>('/api/corrida/estado'),
 
+	// Reclasifica una foto: mueve el archivo real en data/ de una persona a
+	// otra. movido=false con motivo cuando soltarla no cambia nada (misma
+	// persona); 409 si ya hay un archivo con ese nombre en el destino.
+	moverFoto: (ruta: string, personaDestino: string) =>
+		enviar<{ movido: boolean; de?: string; a?: string; motivo?: string }>('/api/mover-foto', {
+			ruta,
+			persona_destino: personaDestino
+		}),
+
 	urlFoto: (ruta: string) => `${BASE}/api/foto?ruta=${encodeURIComponent(ruta)}`,
 	base: BASE
 };

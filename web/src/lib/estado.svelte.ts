@@ -103,6 +103,26 @@ export function objectPosition(ruta: string): string {
 	return r ? `${r.x}% ${r.y}%` : '50% 50%';
 }
 
+/**
+ * Cuando una foto cambia de persona (arrastrarla en "El set" mueve el
+ * archivo de verdad), las preferencias de ESTE browser quedaban guardadas
+ * bajo la ruta VIEJA. Sin esto, el recorte y la exclusión se "pierden" en
+ * cuanto la foto se reclasifica, aunque la foto siga siendo la misma.
+ */
+export function migrarFoto(rutaVieja: string, rutaNueva: string): void {
+	if (rutaVieja === rutaNueva) return;
+	if (estado.fotosExcluidas[rutaVieja]) {
+		delete estado.fotosExcluidas[rutaVieja];
+		estado.fotosExcluidas[rutaNueva] = true;
+		guardarExcluidas(estado.fotosExcluidas);
+	}
+	if (estado.recortes[rutaVieja]) {
+		estado.recortes[rutaNueva] = estado.recortes[rutaVieja];
+		delete estado.recortes[rutaVieja];
+		guardarRecortes(estado.recortes);
+	}
+}
+
 export async function cargarCsvs(): Promise<void> {
 	try {
 		const d = await api.csvs();
