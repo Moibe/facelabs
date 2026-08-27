@@ -5,7 +5,13 @@
 
 	const d = $derived(estado.datos);
 
-	type Filtro = 'todos' | 'errores' | 'match' | 'nonmatch';
+	type Filtro =
+		| 'todos'
+		| 'errores'
+		| 'falsa_aceptacion'
+		| 'falso_rechazo'
+		| 'match'
+		| 'nonmatch';
 	let filtro = $state<Filtro>('todos');
 	let orden = $state<'score' | 'score-desc'>('score');
 
@@ -19,6 +25,8 @@
 	const visibles = $derived.by(() => {
 		let xs = evaluados;
 		if (filtro === 'errores') xs = xs.filter((x) => x.v !== 'correcto');
+		else if (filtro === 'falsa_aceptacion' || filtro === 'falso_rechazo')
+			xs = xs.filter((x) => x.v === filtro);
 		else if (filtro === 'match') xs = xs.filter((x) => x.par.same_person);
 		else if (filtro === 'nonmatch') xs = xs.filter((x) => !x.par.same_person);
 		const dir = orden === 'score' ? 1 : -1;
@@ -26,6 +34,10 @@
 	});
 
 	const nErrores = $derived(evaluados.filter((x) => x.v !== 'correcto').length);
+	const nFalsasAceptaciones = $derived(
+		evaluados.filter((x) => x.v === 'falsa_aceptacion').length
+	);
+	const nFalsosRechazos = $derived(evaluados.filter((x) => x.v === 'falso_rechazo').length);
 
 	const rango = $derived.by(() => {
 		const todos = (d?.pares ?? []).map((p) => p.score).filter((s): s is number => s !== null);
@@ -75,7 +87,7 @@
 			<output class="valor-t">{estado.threshold.toFixed(3)}</output>
 		</div>
 		<div class="filtros">
-			{#each [['todos', 'Todos'], ['errores', `Sólo errores (${nErrores})`], ['match', 'Misma persona'], ['nonmatch', 'Personas distintas']] as [k, etq] (k)}
+			{#each [['todos', 'Todos'], ['errores', `Sólo errores (${nErrores})`], ['falsa_aceptacion', `Falsas aceptaciones (${nFalsasAceptaciones})`], ['falso_rechazo', `Falsos rechazos (${nFalsosRechazos})`], ['match', 'Misma persona'], ['nonmatch', 'Personas distintas']] as [k, etq] (k)}
 				<button
 					type="button"
 					class="chip"
@@ -101,6 +113,12 @@
 				{#if filtro === 'errores'}
 					Ningún par se clasifica mal en t = {estado.threshold.toFixed(3)}. Mueve el threshold para
 					ver dónde empieza a romperse.
+				{:else if filtro === 'falsa_aceptacion'}
+					Ninguna falsa aceptación en t = {estado.threshold.toFixed(3)}. Baja el threshold para ver
+					dónde el sistema empieza a confundir personas distintas.
+				{:else if filtro === 'falso_rechazo'}
+					Ningún falso rechazo en t = {estado.threshold.toFixed(3)}. Sube el threshold para ver
+					dónde el sistema empieza a rechazar a la misma persona.
 				{:else}
 					No hay pares con este filtro.
 				{/if}
