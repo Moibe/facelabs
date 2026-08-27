@@ -276,7 +276,7 @@ export type CorpusResumen = {
 
 export type IndexarEstado = {
 	en_curso: boolean;
-	etapa: 'cargando_modelo' | 'indexando' | '';
+	etapa: 'cargando_modelo' | 'indexando' | 'pausado' | '';
 	actual: number;
 	total: number;
 	archivo: string;
@@ -285,6 +285,7 @@ export type IndexarEstado = {
 		fotos_vistas: number;
 		indexadas_ok: number;
 		fallidas: number;
+		detenido: boolean;
 	} | null;
 	error: string | null;
 };
@@ -353,6 +354,10 @@ export const api = {
 			device
 		}),
 	indexarEstado: () => pedir<IndexarEstado>('/api/corpus/indexar/estado'),
+	// Pide parar en el siguiente punto seguro; el poll de indexarEstado()
+	// que ya esta corriendo detecta en_curso=false solo, sin que haga falta
+	// sondear esto por separado.
+	detenerIndexar: () => enviar<{ deteniendo: boolean }>('/api/corpus/indexar/detener', {}),
 
 	// Sincrono: sólo extrae las pocas fotos de consulta si hiciera falta, y
 	// compara contra lo que YA este indexado (rapido incluso con el corpus

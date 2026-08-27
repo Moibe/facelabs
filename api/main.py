@@ -9,11 +9,11 @@ usa la CLI.
 Consecuencia practica: si un numero del front no cuadra con el de la terminal,
 es un bug de serializacion, nunca dos implementaciones que se separaron.
 
-Solo lectura salvo seis POST explicitos (generar manifiesto / correr una
+Solo lectura salvo siete POST explicitos (generar manifiesto / correr una
 corrida / mover una foto entre personas / subir fotos / indexar un corpus
-externo / buscar contra ese corpus). Escucha en 127.0.0.1 y nada mas: esto
-procesa fotos de personas que dieron consentimiento para un experimento, no
-para exponer un puerto.
+externo / detener esa indexacion / buscar contra ese corpus). Escucha en
+127.0.0.1 y nada mas: esto procesa fotos de personas que dieron
+consentimiento para un experimento, no para exponer un puerto.
 """
 
 from __future__ import annotations
@@ -591,13 +591,26 @@ class PeticionIndexarCorpus(BaseModel):
 _indexar_lock = threading.Lock()
 _indexar_estado: dict[str, Any] = {
     "en_curso": False,
-    "etapa": "",  # "cargando_modelo" | "indexando" | ""
+    "etapa": "",  # "cargando_modelo" | "indexando" | "pausado" | ""
     "actual": 0,
     "total": 0,
     "archivo": "",
     "resultado": None,
     "error": None,
 }
+
+# Indexar y buscar compiten por el mismo CPU (ambos usan el modelo de
+# reconocimiento). "set" = indexar puede avanzar; "clear" = pausado. Arranca
+# en "set" (nada que pausar todavia). /api/corpus/buscar lo limpia antes de
+# trabajar y lo repone al terminar, para que una busqueda dispare una pausa
+# en vez de quedarse muerta de hambre esperando su turno de CPU.
+_permiso_indexar = threading.Event()
+_permiso_indexar.set()
+
+# "set" = alguien pidio detener la indexacion en curso. Se limpia al arrancar
+# cada job nuevo (si no, un stop viejo mataria la siguiente corrida antes de
+# que empiece).
+_cancelar_indexar = threading.Event()
 
 
 @app.post("/api/corpus/indexar")
@@ -610,6 +623,7 @@ def corpus_indexar(p: PeticionIndexarCorpus) -> dict[str, Any]:
             "en_curso": True, "etapa": "cargando_modelo",
             "actual": 0, "total": 0, "archivo": "", "resultado": None, "error": None,
         })
+    _cancelar_indexar.clear()
 
     def _reportar(actual: int, total: int, archivo: str, etapa: str) -> None:
         with _indexar_lock:
@@ -626,7 +640,8 @@ def corpus_indexar(p: PeticionIndexarCorpus) -> dict[str, Any]:
             resultado = indexar_corpus(
                 CORPUS_DIR, rt,
                 limite_carpetas=p.limite_carpetas, limite_por_carpeta=p.limite_por_carpeta,
-                face_policy=p.face_policy, on_progreso=_reportar)
+                face_policy=p.face_policy, on_progreso=_reportar,
+                pausable=_permiso_indexar, cancelable=_cancelar_indexar)
             with _indexar_lock:
                 _indexar_estado["resultado"] = resultado
         except Exception as exc:
@@ -645,6 +660,18 @@ def corpus_indexar(p: PeticionIndexarCorpus) -> dict[str, Any]:
 def corpus_indexar_estado() -> dict[str, Any]:
     with _indexar_lock:
         return dict(_indexar_estado)
+
+
+@app.post("/api/corpus/indexar/detener")
+def corpus_indexar_detener() -> dict[str, Any]:
+    """Pide parar en el siguiente punto seguro (nunca a mitad de una foto).
+    Lo ya guardado en cache se queda; sondea /api/corpus/indexar/estado para
+    ver cuando en_curso pasa a false."""
+    with _indexar_lock:
+        if not _indexar_estado["en_curso"]:
+            raise HTTPException(409, "No hay ninguna indexacion en curso.")
+    _cancelar_indexar.set()
+    return {"deteniendo": True}
 
 
 class PeticionBuscarCorpus(BaseModel):
@@ -674,6 +701,12 @@ def corpus_buscar(p: PeticionBuscarCorpus) -> dict[str, Any]:
 
     from facid.busqueda import buscar
     from facid.runtime import load_runtime
+    # Pausa la indexacion (si hay una en curso) mientras dura esta busqueda:
+    # las dos usan el modelo intensivamente, y sin esto la busqueda queda
+    # muerta de hambre de CPU detras de un corpus de decenas de miles de
+    # fotos. Se repone SIEMPRE, exito o error, para no dejar la indexacion
+    # pausada para siempre si esto revienta.
+    _permiso_indexar.clear()
     try:
         rt = load_runtime(device=p.device,
                           require_gpu=False if p.allow_cpu_fallback else None,
@@ -684,6 +717,8 @@ def corpus_buscar(p: PeticionBuscarCorpus) -> dict[str, Any]:
             face_policy=p.face_policy, top_n=p.top_n)
     except Exception as exc:
         raise HTTPException(500, f"{type(exc).__name__}: {exc}") from exc
+    finally:
+        _permiso_indexar.set()
 
     for r in resultado["resultados"]:
         for c in r["coincidencias"]:

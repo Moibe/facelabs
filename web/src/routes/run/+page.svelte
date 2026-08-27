@@ -68,6 +68,7 @@
 
 	async function indexar() {
 		indexando = true;
+		deteniendo = false;
 		errorIndexar = null;
 		progresoIndexar = null;
 		try {
@@ -85,6 +86,21 @@
 			errorIndexar = e instanceof Error ? e.message : String(e);
 		} finally {
 			indexando = false;
+		}
+	}
+
+	// No se reinicia a false a proposito: el boton vive detras de
+	// {#if indexando}, asi que en cuanto el while() de indexar() vea
+	// en_curso=false, el boton desaparece solo — no hace falta destrabarlo.
+	let deteniendo = $state(false);
+
+	async function detenerIndexar() {
+		deteniendo = true;
+		try {
+			await api.detenerIndexar();
+		} catch (e) {
+			errorIndexar = e instanceof Error ? e.message : String(e);
+			deteniendo = false; // el pedido de parar fallo: se puede reintentar
 		}
 	}
 
@@ -210,6 +226,11 @@
 			<button type="button" onclick={indexar} disabled={indexando}>
 				{indexando ? 'indexando…' : 'Indexar'}
 			</button>
+			{#if indexando}
+				<button type="button" class="detener" onclick={detenerIndexar} disabled={deteniendo}>
+					{deteniendo ? 'deteniendo…' : 'Detener'}
+				</button>
+			{/if}
 		</div>
 		<p class="tenue">
 			0 = sin límite — el corpus completo puede tardar horas en CPU. Lo ya indexado no se vuelve
@@ -226,18 +247,27 @@
 					{:else if progresoIndexar.etapa === 'indexando'}
 						Indexando {progresoIndexar.actual}/{progresoIndexar.total} —
 						<code>{progresoIndexar.archivo}</code>
+					{:else if progresoIndexar.etapa === 'pausado'}
+						Pausado — hay una búsqueda en curso, reanuda sola al terminar (
+						{progresoIndexar.actual}/{progresoIndexar.total})
 					{/if}
 				</p>
 			</div>
 		{/if}
 		{#if progresoIndexar?.resultado}
 			<p class="tenue resultado-accion">
+				{#if progresoIndexar.resultado.detenido}
+					<strong>Detenido antes de terminar.</strong>
+				{/if}
 				{progresoIndexar.resultado.indexadas_ok}/{progresoIndexar.resultado.fotos_vistas} fotos
 				indexadas de {progresoIndexar.resultado.carpetas_vistas} carpeta(s)
 				{#if progresoIndexar.resultado.fallidas}
 					· {progresoIndexar.resultado.fallidas} fallida(s)
 				{/if}
 				.
+				{#if progresoIndexar.resultado.detenido}
+					Lo ya guardado no se pierde — dale "Indexar" de nuevo para seguir donde quedó.
+				{/if}
 			</p>
 		{/if}
 		{#if errorIndexar}
@@ -396,6 +426,17 @@
 		border-radius: 9px;
 		padding: 0.4rem 0.5rem;
 		width: 6ch;
+	}
+
+	.detener {
+		color: #fecaca;
+		background: rgba(220, 38, 38, 0.18);
+		border-color: rgba(248, 113, 113, 0.45);
+	}
+
+	.detener:hover:not(:disabled) {
+		background: rgba(220, 38, 38, 0.3);
+		border-color: rgba(248, 113, 113, 0.7);
 	}
 
 	.tira {

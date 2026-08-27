@@ -24,6 +24,7 @@ Separado en dos pasos a proposito:
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -62,8 +63,22 @@ def indexar_corpus(corpus_dir: str | Path, runtime, *,
                    limite_carpetas: int | None = None,
                    limite_por_carpeta: int | None = None,
                    face_policy: str = "strict",
-                   on_progreso: ProgresoCB | None = None) -> dict[str, Any]:
-    """Extrae y cachea embeddings del corpus. No compara nada todavia."""
+                   on_progreso: ProgresoCB | None = None,
+                   pausable: threading.Event | None = None,
+                   cancelable: threading.Event | None = None) -> dict[str, Any]:
+    """Extrae y cachea embeddings del corpus. No compara nada todavia.
+
+    `pausable`: un threading.Event que el llamador controla desde afuera.
+    "set" (o None) = seguir; "clear" = pausar ANTES del siguiente archivo.
+    Existe porque indexar y buscar() compiten por el mismo CPU (ambos usan
+    el modelo); sin esto, una busqueda disparada mientras el corpus se
+    indexa se queda muerta de hambre en vez de responder rapido.
+
+    `cancelable`: otro threading.Event; "set" = detenerse en el siguiente
+    punto seguro (entre fotos, nunca a mitad de una extraccion) y devolver
+    lo que ya se alcanzo a guardar. Se revisa tambien mientras se esta
+    pausado, para que un stop no tenga que esperar a que termine la pausa.
+    """
     corpus = descubrir_corpus(corpus_dir, limite_carpetas=limite_carpetas,
                               limite_por_carpeta=limite_por_carpeta)
     rutas = [f for fotos in corpus.values() for f in fotos]
@@ -72,8 +87,18 @@ def indexar_corpus(corpus_dir: str | Path, runtime, *,
     fp = runtime.fingerprint
     ok = 0
     fallidas = 0
+    detenido = False
     try:
         for k, ruta in enumerate(rutas, 1):
+            while pausable is not None and not pausable.is_set():
+                if cancelable is not None and cancelable.is_set():
+                    break
+                if on_progreso:
+                    on_progreso(k - 1, len(rutas), "", "pausado")
+                pausable.wait(timeout=0.5)
+            if cancelable is not None and cancelable.is_set():
+                detenido = True
+                break
             sha = sha256_file(ruta)
             fila = store.buscar(sha, fp.model_pack, runtime.rec_model_sha256,
                                 fp.det_size, face_policy)
@@ -97,6 +122,7 @@ def indexar_corpus(corpus_dir: str | Path, runtime, *,
         "fotos_vistas": len(rutas),
         "indexadas_ok": ok,
         "fallidas": fallidas,
+        "detenido": detenido,
     }
 
 
