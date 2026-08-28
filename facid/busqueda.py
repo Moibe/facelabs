@@ -105,12 +105,18 @@ def indexar_corpus(corpus_dir: str | Path, runtime, *,
     fallidas = 0
     en_cache = 0
     nuevas = 0
+    # Desglose de lo que se proceso DE VERDAD en esta corrida. "nuevas" solo
+    # dice cuantas se trabajaron; estas dicen como salieron, que es lo que
+    # deja ver en vivo si el detector esta encontrando rostros o no.
+    nuevas_ok = 0
+    nuevas_fallidas = 0
     detenido = False
 
     def _avisar(actual: int, archivo: str, etapa: str) -> None:
         if on_progreso:
             on_progreso({"actual": actual, "total": len(rutas), "archivo": archivo,
-                         "etapa": etapa, "en_cache": en_cache, "nuevas": nuevas})
+                         "etapa": etapa, "en_cache": en_cache, "nuevas": nuevas,
+                         "nuevas_ok": nuevas_ok, "nuevas_fallidas": nuevas_fallidas})
 
     try:
         for k, ruta in enumerate(rutas, 1):
@@ -140,9 +146,11 @@ def indexar_corpus(corpus_dir: str | Path, runtime, *,
                 if r["error"] is None:
                     store.guardar(r, runtime, face_policy)
                     ok += 1
+                    nuevas_ok += 1
                 else:
                     store.registrar_fallo(r, runtime, face_policy)
                     fallidas += 1
+                    nuevas_fallidas += 1
             _avisar(k, ruta.name, "indexando")
     finally:
         store.close()
@@ -154,6 +162,8 @@ def indexar_corpus(corpus_dir: str | Path, runtime, *,
         "fallidas": fallidas,
         "en_cache": en_cache,
         "nuevas": nuevas,
+        "nuevas_ok": nuevas_ok,
+        "nuevas_fallidas": nuevas_fallidas,
         "detenido": detenido,
     }
 

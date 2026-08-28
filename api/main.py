@@ -597,9 +597,12 @@ _indexar_estado: dict[str, Any] = {
     "total": 0,
     "archivo": "",
     # Desglose del avance: sin esto, el contador corriendo de 1 a 85k se ve
-    # igual esté saltando cache o extrayendo de verdad.
+    # igual esté saltando cache o extrayendo de verdad. Y de lo nuevo, cuanto
+    # salio con rostro y cuanto no.
     "en_cache": 0,
     "nuevas": 0,
+    "nuevas_ok": 0,
+    "nuevas_fallidas": 0,
     "resultado": None,
     "error": None,
 }
@@ -627,6 +630,7 @@ def corpus_indexar(p: PeticionIndexarCorpus) -> dict[str, Any]:
         _indexar_estado.update({
             "en_curso": True, "etapa": "cargando_modelo",
             "actual": 0, "total": 0, "archivo": "", "en_cache": 0, "nuevas": 0,
+            "nuevas_ok": 0, "nuevas_fallidas": 0,
             "resultado": None, "error": None,
         })
     _cancelar_indexar.clear()

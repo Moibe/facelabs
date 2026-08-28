@@ -109,6 +109,18 @@
 			.catch(() => (corpus = null));
 		void refrescarHistorial();
 		void refrescarPersonas();
+		// Si ya hay una indexacion corriendo (la arranco otra pestaña, o esta
+		// misma antes de recargar), engancharse a ella en vez de mostrar la
+		// pagina como si no pasara nada.
+		api
+			.indexarEstado()
+			.then((e) => {
+				if (e.en_curso) {
+					progresoIndexar = e;
+					void seguirIndexado();
+				}
+			})
+			.catch(() => {});
 	});
 
 	const fecha = (iso: string) => {
@@ -121,8 +133,27 @@
 		return Math.round((progresoIndexar.actual / progresoIndexar.total) * 100);
 	});
 
-	async function indexar() {
+	// Sondea hasta que el trabajo termine. Aparte de indexar() porque tambien
+	// lo usa el enganche al abrir la pagina: la indexacion vive en el
+	// servidor, no en esta pestaña, y sin esto recargar (o abrir en otra
+	// ventana) dejaba la barra invisible aunque el trabajo siguiera corriendo.
+	async function seguirIndexado() {
 		indexando = true;
+		try {
+			while (progresoIndexar?.en_curso) {
+				await new Promise((r) => setTimeout(r, 500));
+				progresoIndexar = await api.indexarEstado();
+			}
+			if (progresoIndexar?.error) errorIndexar = progresoIndexar.error;
+			await refrescarHistorial();
+		} catch (e) {
+			errorIndexar = e instanceof Error ? e.message : String(e);
+		} finally {
+			indexando = false;
+		}
+	}
+
+	async function indexar() {
 		deteniendo = false;
 		errorIndexar = null;
 		progresoIndexar = null;
@@ -132,17 +163,11 @@
 				limitePorCarpeta || null,
 				device
 			);
-			while (progresoIndexar.en_curso) {
-				await new Promise((r) => setTimeout(r, 500));
-				progresoIndexar = await api.indexarEstado();
-			}
-			if (progresoIndexar.error) errorIndexar = progresoIndexar.error;
-			await refrescarHistorial();
 		} catch (e) {
 			errorIndexar = e instanceof Error ? e.message : String(e);
-		} finally {
-			indexando = false;
+			return;
 		}
+		await seguirIndexado();
 	}
 
 	// No se reinicia a false a proposito: el boton vive detras de
@@ -314,8 +339,12 @@
 					{:else if progresoIndexar.etapa === 'indexando'}
 						Indexando {progresoIndexar.actual}/{progresoIndexar.total} ·
 						<strong>{progresoIndexar.en_cache}</strong> ya estaban ·
-						<strong>{progresoIndexar.nuevas}</strong> nuevas —
-						<code>{progresoIndexar.archivo}</code>
+						<strong>{progresoIndexar.nuevas}</strong> nuevas
+						{#if progresoIndexar.nuevas}
+							(<span class="bien">{progresoIndexar.nuevas_ok} con rostro</span>,
+							<span class="mal">{progresoIndexar.nuevas_fallidas} sin</span>)
+						{/if}
+						— <code>{progresoIndexar.archivo}</code>
 					{:else if progresoIndexar.etapa === 'pausado'}
 						Pausado — hay una búsqueda en curso, reanuda sola al terminar (
 						{progresoIndexar.actual}/{progresoIndexar.total})
@@ -333,8 +362,11 @@
 				{#if progresoIndexar.resultado.fallidas}
 					· {progresoIndexar.resultado.fallidas} fallida(s)
 				{/if}
-				· <strong>{progresoIndexar.resultado.nuevas}</strong> procesadas esta vez,
-				{progresoIndexar.resultado.en_cache} ya estaban.
+				· <strong>{progresoIndexar.resultado.nuevas}</strong> procesadas esta vez
+				{#if progresoIndexar.resultado.nuevas}
+					(<span class="bien">{progresoIndexar.resultado.nuevas_ok} con rostro</span>,
+					<span class="mal">{progresoIndexar.resultado.nuevas_fallidas} sin</span>)
+				{/if}, {progresoIndexar.resultado.en_cache} ya estaban.
 				{#if progresoIndexar.resultado.detenido}
 					Lo ya guardado no se pierde — dale "Indexar" de nuevo para seguir donde quedó.
 				{/if}
@@ -794,6 +826,16 @@
 
 	.error-texto {
 		margin: 0.5rem 0 0;
+		color: var(--mal);
+	}
+
+	/* Colores de estado, no de serie: verde/rojo aqui significan "salio" y
+	   "no salio", y siempre van acompañados del texto que lo dice. */
+	.bien {
+		color: var(--bien);
+	}
+
+	.mal {
 		color: var(--mal);
 	}
 </style>

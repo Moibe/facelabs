@@ -283,6 +283,9 @@ export type IndexarEstado = {
 	/** Cuántas de las `actual` salieron de caché vs se procesaron de verdad. */
 	en_cache: number;
 	nuevas: number;
+	/** Y de esas `nuevas`, cuántas dieron rostro y cuántas no. */
+	nuevas_ok: number;
+	nuevas_fallidas: number;
 	resultado: {
 		carpetas_vistas: number;
 		fotos_vistas: number;
@@ -290,6 +293,8 @@ export type IndexarEstado = {
 		fallidas: number;
 		en_cache: number;
 		nuevas: number;
+		nuevas_ok: number;
+		nuevas_fallidas: number;
 		detenido: boolean;
 	} | null;
 	error: string | null;
