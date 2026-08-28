@@ -299,6 +299,11 @@
 
 <section class="tarjeta">
 	<h2>2 · Corpus externo</h2>
+	<p class="tenue">
+		No depende del paso 1: indexar sólo lee el corpus, no le importa a quién buscas. Conviene
+		arrancarlo primero — tarda horas — y preparar las fotos de referencia mientras corre. El
+		paso 3 sí necesita los dos.
+	</p>
 	{#if corpus === null}
 		<p class="tenue">Cargando…</p>
 	{:else if !corpus.existe}
