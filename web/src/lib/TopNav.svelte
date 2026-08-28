@@ -46,8 +46,13 @@
 
 	<div class="spacer"></div>
 
+	<!-- "API apagada" sí aplica en todas partes: sin API tampoco funciona Run.
+	     El CSV en cambio es de Labs — es la salida de una calibración, y Run
+	     busca contra el corpus, que no tiene nada que ver con eso. -->
 	{#if estado.apiCaida}
 		<span class="estado caido">API apagada</span>
+	{:else if enRun}
+		<!-- nada: el estado del CSV no significa nada en esta sección -->
 	{:else if estado.cargando}
 		<span class="estado cargando">cargando…</span>
 	{:else if estado.datos}
