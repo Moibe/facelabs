@@ -35,6 +35,10 @@ CREATE TABLE IF NOT EXISTS embeddings (
     face_selection      TEXT    NOT NULL,
     all_det_scores      TEXT,
     exif_applied        INTEGER,
+    -- 0 = el rostro se detecto en la imagen tal cual. >0 = solo aparecio tras
+    -- rellenar ese % de margen (ver extract._detectar_con_margen). Queda
+    -- asentado: un embedding "rescatado" no se presenta como uno normal.
+    margen_agregado     REAL,
     model_pack          TEXT    NOT NULL,
     rec_model_file      TEXT,
     rec_model_sha256    TEXT    NOT NULL,
@@ -97,12 +101,27 @@ class EmbeddingStore:
         self.emb_dir = Path(emb_dir)
         self.emb_dir.mkdir(parents=True, exist_ok=True)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(str(self.db_path))
+        # timeout: ya no hay un solo escritor. Una indexacion de horas escribe
+        # sin parar mientras el API atiende busquedas y el historial, y una
+        # migracion pide lock exclusivo. Sin esto, cualquiera de los dos
+        # revienta al instante con "database is locked" en vez de esperar su
+        # turno unos segundos.
+        self.conn = sqlite3.connect(str(self.db_path), timeout=30.0)
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(ESQUEMA)
         self.conn.commit()
         self._migrar_rec_model_sha256_en_fallos()
+        self._migrar_columna("embeddings", "margen_agregado", "REAL")
         self._stat_pendientes = 0
+
+    def _migrar_columna(self, tabla: str, columna: str, tipo: str) -> None:
+        """ALTER TABLE ADD COLUMN sobre datos existentes. Las filas viejas
+        quedan en NULL, que es honesto: de esas no sabemos si hizo falta
+        margen porque se extrajeron antes de que existiera la idea."""
+        cols = {r["name"] for r in self.conn.execute(f"PRAGMA table_info({tabla})")}
+        if columna not in cols:
+            self.conn.execute(f"ALTER TABLE {tabla} ADD COLUMN {columna} {tipo}")
+            self.conn.commit()
 
     def _migrar_rec_model_sha256_en_fallos(self) -> None:
         """Bases de datos creadas antes de la cache de fallos no tienen esta
@@ -238,11 +257,11 @@ class EmbeddingStore:
             """INSERT OR REPLACE INTO embeddings (
                 image_sha256, source_path, npy_path, embedding_dim, det_score,
                 bbox_x, bbox_y, bbox_w, bbox_h, n_faces_detected, face_policy,
-                face_selection, all_det_scores, exif_applied, model_pack,
-                rec_model_file, rec_model_sha256, det_model_file, det_model_sha256,
-                det_size, provider, insightface_version, onnxruntime_version,
-                facid_version, created_at
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                face_selection, all_det_scores, exif_applied, margen_agregado,
+                model_pack, rec_model_file, rec_model_sha256, det_model_file,
+                det_model_sha256, det_size, provider, insightface_version,
+                onnxruntime_version, facid_version, created_at
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 sha, resultado["source_path"], npy_guardado,
                 int(resultado["embedding"].size), float(resultado["det_score"]),
@@ -250,6 +269,7 @@ class EmbeddingStore:
                 resultado["face_selection"],
                 json.dumps(resultado.get("all_det_scores")),
                 1 if resultado.get("exif_orientation_applied") else 0,
+                float(resultado.get("margen_agregado") or 0.0),
                 fp.model_pack, runtime.rec_model_file, runtime.rec_model_sha256,
                 runtime.det_model_file, runtime.det_model_sha256,
                 fp.det_size, runtime.provider_activo, fp.insightface_version,

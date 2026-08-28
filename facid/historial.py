@@ -77,7 +77,9 @@ class HistorialStore:
     def __init__(self, db_path: Path | str = INDEX_DB):
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(str(self.db_path))
+        # Ver la nota en store.py: comparten archivo con una indexacion que
+        # puede estar escribiendo durante horas.
+        self.conn = sqlite3.connect(str(self.db_path), timeout=30.0)
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(ESQUEMA_HISTORIAL)
         self.conn.commit()

@@ -141,6 +141,71 @@ def test_compare():
         check(True, "threshold fuera de [-1,1] lanza ValueError")
 
 
+# =================================================== 2b. reintento con margen
+class FakeAppSoloConContexto:
+    """Detector que SOLO encuentra el rostro si la imagen trae margen.
+
+    Modela lo medido con el detector real: un recorte pegado a la cara da
+    NO_FACE, y el mismo rostro con 50% de borde se detecta sin problema.
+    """
+
+    def __init__(self, lado_original: int):
+        self.lado_original = lado_original
+        self.models = {}
+        self.model_dir = str(TMP / "modelos_falsos")
+        self.tamaños_vistos: list[int] = []
+
+    def get(self, img):
+        ancho = img.shape[1]
+        self.tamaños_vistos.append(ancho)
+        if ancho > self.lado_original:
+            return [FakeFace([10, 10, 60, 60], 0.9, emb_persona(30))]
+        return []
+
+
+def test_reintento_con_margen():
+    print("\n[2b] extract — reintento con margen para recortes pegados")
+    d = TMP / "imgs_margen"
+    p = escribir_img(d / "apretada.png", 1)   # 96x96, por debajo del limite
+
+    app = FakeAppSoloConContexto(lado_original=96)
+    rt = FakeRuntime(app)
+    r = extract_embedding(p, rt)
+    check(r["error"] is None, "con margen, el rostro que estaba 'perdido' aparece")
+    check(r["margen_agregado"] == 0.5,
+          f"queda asentado cuanto margen hizo falta (dio {r['margen_agregado']})")
+    check(len(app.tamaños_vistos) >= 2,
+          "primero intenta con la imagen tal cual, y solo despues rellena")
+    check(app.tamaños_vistos[0] == 96, "el primer intento es sobre la imagen original")
+    # bbox del fake: [10,10,60,60] sobre el lienzo rellenado (margen 48px).
+    # Debe volver al sistema de la imagen REAL, no quedarse en el temporal.
+    check(r["bbox"][0] == 10 - 48,
+          f"el bbox vuelve a coordenadas de la imagen original (dio {r['bbox'][0]})")
+
+    app2 = FakeAppSoloConContexto(lado_original=96)
+    r2 = extract_embedding(p, FakeRuntime(app2), reintentar_con_margen=False)
+    check(r2["error"] == ErrorCode.NO_FACE, "se puede apagar el reintento")
+    check(len(app2.tamaños_vistos) == 1, "apagado, no hace intentos de mas")
+
+    # Una imagen grande ya trae contexto: rellenarla no ayudaria y solo
+    # costaria detecciones extra por foto.
+    grande = d / "grande.png"
+    img = np.full((500, 500, 3), 40, dtype=np.uint8)
+    img[0, 0, 0] = 1
+    cv2.imwrite(str(grande), img)
+    app3 = FakeAppSoloConContexto(lado_original=500)
+    r3 = extract_embedding(grande, FakeRuntime(app3))
+    check(r3["error"] == ErrorCode.NO_FACE, "en una imagen grande sigue dando NO_FACE")
+    check(len(app3.tamaños_vistos) == 1,
+          "y NO se reintenta: arriba del limite el margen no aporta")
+
+    # Camino normal: si se detecta a la primera, margen_agregado queda en 0.
+    rt_normal = FakeRuntime(FakeApp({1: [FakeFace([5, 5, 40, 40], 0.9, emb_persona(31))]}))
+    r4 = extract_embedding(p, rt_normal)
+    check(r4["error"] is None and r4["margen_agregado"] == 0.0,
+          "lo que se detecta sin ayuda queda marcado con margen 0")
+
+
 # ================================================================ 2. extract
 def test_extract():
     print("\n[2] extract — contrato y casos borde")
@@ -803,6 +868,7 @@ def main() -> int:
     print(f"Directorio temporal: {TMP}")
     test_compare()
     test_extract()
+    test_reintento_con_margen()
     test_store()
     test_calibracion_exacta()
     test_dependencia()

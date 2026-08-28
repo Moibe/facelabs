@@ -36,9 +36,50 @@ def _resultado(error: str | None = None, **campos: Any) -> dict[str, Any]:
         "all_det_scores": None,
         "image_sha256": None,
         "source_path": None,
+        # 0 = se detecto en la imagen tal cual. >0 = solo se detecto despues
+        # de rellenar ese % de margen alrededor (ver _detectar_con_margen).
+        "margen_agregado": 0.0,
     }
     base.update(campos)
     return base
+
+
+# Un detector de rostros necesita CONTEXTO alrededor de la cara: esta
+# entrenado para encontrarla dentro de una escena, no para confirmar un
+# recorte que ya viene pegado a la cara. Medido sobre este mismo pipeline,
+# con el MISMO rostro y el mismo tamaño final, un recorte con 0-25% de margen
+# da NO_FACE y con 50% se detecta sin problema.
+#
+# Eso hace fallar cualquier corpus de recortes ya hechos por otra herramienta
+# (que detecto bien, pero sobre el cuadro completo). Rellenar el borde
+# devuelve el contexto que el recorte quito.
+MARGENES_REINTENTO = (0.5, 1.0)
+# Arriba de esto la imagen ya trae contexto de sobra: si ahi no hay rostro,
+# rellenar no lo va a inventar y solo cuesta dos detecciones mas por imagen.
+LADO_MAX_PARA_REINTENTO = 400
+
+
+def _detectar_con_margen(img, runtime, margen: float):
+    """Reintenta la deteccion sobre la imagen con un borde replicado.
+
+    BORDER_REPLICATE y no un relleno negro: una franja negra dura mete bordes
+    artificiales fuertes justo donde el detector busca contornos. Replicar el
+    pixel del borde es mas neutro. (Ambos funcionan en la practica; se eligio
+    el menos invasivo.)
+    """
+    import cv2
+
+    h, w = img.shape[:2]
+    mx, my = int(w * margen), int(h * margen)
+    grande = cv2.copyMakeBorder(img, my, my, mx, mx, cv2.BORDER_REPLICATE)
+    faces = runtime.app.get(grande)
+    # Las coordenadas vuelven al sistema de la imagen ORIGINAL: el bbox que se
+    # persiste debe seguir siendo valido sobre el archivo real, no sobre un
+    # lienzo temporal que no existe en disco.
+    for f in faces:
+        f.bbox = np.asarray(f.bbox, dtype=np.float32) - np.array(
+            [mx, my, mx, my], dtype=np.float32)
+    return faces
 
 
 def _leer_imagen(path: Path):
@@ -64,12 +105,18 @@ def _leer_imagen(path: Path):
 
 
 def extract_embedding(image_path: str | Path, runtime, *,
-                      face_policy: str = DEFAULT_FACE_POLICY) -> dict[str, Any]:
+                      face_policy: str = DEFAULT_FACE_POLICY,
+                      reintentar_con_margen: bool = True) -> dict[str, Any]:
     """Extrae el embedding de UN rostro de `image_path`.
 
     `runtime` es un FaceRuntime ya cargado (ver runtime.load_runtime). Se pasa
     como parametro en vez de crearse aqui para no re-cargar 300 MB de ONNX por
     imagen, y para que la huella del entorno sea la misma en toda la corrida.
+
+    `reintentar_con_margen`: si no se detecta nada en una imagen chica, se
+    reintenta rellenando el borde (ver MARGENES_REINTENTO). Cuanto margen hizo
+    falta queda en el campo `margen_agregado` — no se esconde que ese rostro
+    solo aparecio despues de ayudarlo.
 
     Nunca lanza por condiciones de datos: devuelve el codigo en `error`.
     """
@@ -88,11 +135,22 @@ def extract_embedding(image_path: str | Path, runtime, *,
         return _resultado(ErrorCode.UNREADABLE_IMAGE, **comun)
 
     faces = runtime.app.get(img)
+    margen_usado = 0.0
+
+    if not faces and reintentar_con_margen \
+            and max(img.shape[:2]) <= LADO_MAX_PARA_REINTENTO:
+        for margen in MARGENES_REINTENTO:
+            faces = _detectar_con_margen(img, runtime, margen)
+            if faces:
+                margen_usado = margen
+                break
+
     n = len(faces)
     det_scores = [round(float(f.det_score), 6) for f in faces]
     comun["n_faces_detected"] = n
     comun["all_det_scores"] = det_scores
     comun["exif_orientation_applied"] = exif_aplicado
+    comun["margen_agregado"] = margen_usado
 
     if n == 0:
         return _resultado(ErrorCode.NO_FACE, **comun)
