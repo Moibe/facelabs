@@ -36,6 +36,7 @@ import facid                                                # noqa: E402
 from facid import calibrate as cal                          # noqa: E402
 from facid.config import CORPUS_DIR, DATA_DIR, OUT_DIR        # noqa: E402
 from facid.dependencia import estructura, jackknife_por_persona  # noqa: E402
+from facid.historial import HistorialStore                     # noqa: E402
 from facid.harness import (                                 # noqa: E402
     ManifestError, cargar_manifiesto, descubrir_personas, imagenes_unicas,
     init_manifest,
@@ -635,25 +636,33 @@ def corpus_indexar(p: PeticionIndexarCorpus) -> dict[str, Any]:
             _indexar_estado.update(info)
 
     def _trabajo() -> None:
-        try:
-            from facid.busqueda import indexar_corpus
-            from facid.runtime import load_runtime
-            rt = load_runtime(device=p.device,
-                              require_gpu=False if p.allow_cpu_fallback else None,
-                              verbose=False)
-            resultado = indexar_corpus(
-                CORPUS_DIR, rt,
-                limite_carpetas=p.limite_carpetas, limite_por_carpeta=p.limite_por_carpeta,
-                face_policy=p.face_policy, on_progreso=_reportar,
-                pausable=_permiso_indexar, cancelable=_cancelar_indexar)
-            with _indexar_lock:
-                _indexar_estado["resultado"] = resultado
-        except Exception as exc:
-            with _indexar_lock:
-                _indexar_estado["error"] = f"{type(exc).__name__}: {exc}"
-        finally:
-            with _indexar_lock:
-                _indexar_estado["en_curso"] = False
+        # El historial se abre DENTRO del hilo: sqlite3 no comparte conexiones
+        # entre hilos, y esta es la unica que escribe corridas.
+        with HistorialStore() as hist:
+            corrida_id = hist.iniciar_corrida(
+                "indexado", str(CORPUS_DIR), p.limite_carpetas, p.limite_por_carpeta)
+            try:
+                from facid.busqueda import indexar_corpus
+                from facid.runtime import load_runtime
+                rt = load_runtime(device=p.device,
+                                  require_gpu=False if p.allow_cpu_fallback else None,
+                                  verbose=False)
+                resultado = indexar_corpus(
+                    CORPUS_DIR, rt,
+                    limite_carpetas=p.limite_carpetas, limite_por_carpeta=p.limite_por_carpeta,
+                    face_policy=p.face_policy, on_progreso=_reportar,
+                    pausable=_permiso_indexar, cancelable=_cancelar_indexar)
+                hist.cerrar_corrida(corrida_id, resultado=resultado)
+                with _indexar_lock:
+                    _indexar_estado["resultado"] = resultado
+            except Exception as exc:
+                msg = f"{type(exc).__name__}: {exc}"
+                hist.cerrar_corrida(corrida_id, error=msg)
+                with _indexar_lock:
+                    _indexar_estado["error"] = msg
+            finally:
+                with _indexar_lock:
+                    _indexar_estado["en_curso"] = False
 
     threading.Thread(target=_trabajo, daemon=True).start()
     with _indexar_lock:
@@ -686,6 +695,9 @@ class PeticionBuscarCorpus(BaseModel):
     top_n: int = 15
     device: str = "cuda"
     allow_cpu_fallback: bool = True
+    # Solo para dejarlo asentado en el historial: la comparacion no lo usa
+    # (se guarda el ranking completo, no solo lo que pasa el umbral).
+    umbral: float | None = None
 
 
 @app.post("/api/corpus/buscar")
@@ -727,4 +739,43 @@ def corpus_buscar(p: PeticionBuscarCorpus) -> dict[str, Any]:
     for r in resultado["resultados"]:
         for c in r["coincidencias"]:
             c["ruta"] = f"{c['persona']}/{c['archivo']}"
+
+    with HistorialStore() as hist:
+        resultado["busqueda_id"] = hist.guardar_busqueda(
+            p.persona, str(CORPUS_DIR), p.umbral, resultado)
     return resultado
+
+
+# ---------------------------------------------------------------------------
+# Historial: lo unico que vivia SOLO en memoria del proceso. Sin esto, un
+# reinicio dejaba la pantalla en blanco aunque el trabajo siguiera en disco.
+# ---------------------------------------------------------------------------
+@app.get("/api/corpus/cobertura")
+def corpus_cobertura() -> dict[str, Any]:
+    """Cuanto del corpus ya se proceso alguna vez. Sale de SQLite, no de
+    recorrer el disco: responde igual de rapido con el corpus completo."""
+    with HistorialStore() as hist:
+        return hist.cobertura(CORPUS_DIR)
+
+
+@app.get("/api/busquedas")
+def listar_busquedas(limite: int = 20) -> dict[str, Any]:
+    with HistorialStore() as hist:
+        return {"busquedas": hist.busquedas(limite)}
+
+
+@app.get("/api/busquedas/{busqueda_id}")
+def ver_busqueda(busqueda_id: int) -> dict[str, Any]:
+    with HistorialStore() as hist:
+        b = hist.busqueda(busqueda_id)
+    if b is None:
+        raise HTTPException(404, f"no existe la busqueda {busqueda_id}")
+    return b
+
+
+@app.post("/api/busquedas/{busqueda_id}/borrar")
+def borrar_busqueda(busqueda_id: int) -> dict[str, Any]:
+    with HistorialStore() as hist:
+        if not hist.borrar_busqueda(busqueda_id):
+            raise HTTPException(404, f"no existe la busqueda {busqueda_id}")
+    return {"borrada": busqueda_id}

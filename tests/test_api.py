@@ -397,6 +397,50 @@ def test_corpus():
     check(r.status_code == 404, f"foto inexistente en el corpus -> 404 (dio {r.status_code})")
 
 
+def test_historial_api():
+    print("\n[api-12] /api/corpus/cobertura y /api/busquedas — historial persistido")
+    r = cli.get("/api/corpus/cobertura")
+    check(r.status_code == 200, f"cobertura responde 200 (dio {r.status_code})")
+    j = r.json()
+    check({"procesadas", "con_rostro", "sin_rostro"} <= set(j),
+          f"trae el desglose de cobertura (dio {sorted(j)})")
+    check(j["procesadas"] == j["con_rostro"] + j["sin_rostro"],
+          "procesadas = con rostro + sin rostro (no se cuenta nada dos veces)")
+
+    r = cli.get("/api/busquedas")
+    check(r.status_code == 200 and "busquedas" in r.json(), "lista de busquedas responde 200")
+    n_antes = len(r.json()["busquedas"])
+
+    # Se guarda una busqueda directo por el historial (no via /corpus/buscar,
+    # que necesitaria el modelo) y se comprueba que la API la sirve igual.
+    from facid.historial import HistorialStore
+    with HistorialStore() as h:
+        bid = h.guardar_busqueda("alguien", "C:/corpus", 0.2, {
+            "n_indexado": 3, "n_carpetas_indexadas": 1,
+            "resultados": [{"consulta": "q.jpg", "error": None, "coincidencias": [
+                {"persona": "p1", "archivo": "1.jpg", "ruta": "p1/1.jpg", "score": 0.5}]}],
+        })
+
+    r = cli.get("/api/busquedas")
+    check(len(r.json()["busquedas"]) == n_antes + 1, "la busqueda nueva aparece en la lista")
+
+    r = cli.get(f"/api/busquedas/{bid}")
+    check(r.status_code == 200, f"se puede releer por id (dio {r.status_code})")
+    j = r.json()
+    check(j["persona"] == "alguien" and j["umbral"] == 0.2, "conserva persona y umbral")
+    check(j["resultados"][0]["coincidencias"][0]["score"] == 0.5,
+          "conserva el score de la coincidencia")
+
+    check(cli.get("/api/busquedas/999999").status_code == 404,
+          "id inexistente -> 404")
+
+    r = cli.post(f"/api/busquedas/{bid}/borrar")
+    check(r.status_code == 200, f"se puede borrar (dio {r.status_code})")
+    check(cli.get(f"/api/busquedas/{bid}").status_code == 404, "despues de borrar -> 404")
+    check(cli.post(f"/api/busquedas/{bid}/borrar").status_code == 404,
+          "borrar dos veces -> 404")
+
+
 def main() -> int:
     print(f"Directorio temporal: {TMP}")
     test_salud()
@@ -410,6 +454,7 @@ def main() -> int:
     test_mover_foto()
     test_subir_fotos()
     test_corpus()
+    test_historial_api()
 
     print("\n" + "=" * 60)
     if FALLOS:

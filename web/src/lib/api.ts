@@ -301,6 +301,45 @@ export type ResultadoBusqueda = {
 	n_indexado: number;
 	n_carpetas_indexadas: number;
 	resultados: { consulta: string; error: string | null; coincidencias: Coincidencia[] }[];
+	/** Presente en una búsqueda recién hecha; también al releerla del historial. */
+	busqueda_id?: number;
+	persona?: string;
+	umbral?: number | null;
+	creada_en?: string;
+};
+
+export type CorridaRegistrada = {
+	id: number;
+	tipo: string;
+	corpus_dir: string | null;
+	carpetas_vistas: number | null;
+	fotos_vistas: number | null;
+	indexadas_ok: number | null;
+	fallidas: number | null;
+	en_cache: number | null;
+	nuevas: number | null;
+	detenido: number | null;
+	error: string | null;
+	iniciada_en: string;
+	terminada_en: string | null;
+};
+
+export type Cobertura = {
+	procesadas: number;
+	con_rostro: number;
+	sin_rostro: number;
+	total_ultimo_conteo: number | null;
+	ultima_corrida: CorridaRegistrada | null;
+};
+
+export type BusquedaGuardada = {
+	id: number;
+	persona: string;
+	corpus_dir: string | null;
+	umbral: number | null;
+	n_indexado: number | null;
+	n_carpetas_indexadas: number | null;
+	creada_en: string;
 };
 
 // ---------------------------------------------------------------- llamadas
@@ -372,6 +411,7 @@ export const api = {
 		limiteCarpetas: number | null,
 		limitePorCarpeta: number | null,
 		device: string,
+		umbral: number | null = null,
 		topN = 15
 	) =>
 		enviar<ResultadoBusqueda>('/api/corpus/buscar', {
@@ -379,8 +419,16 @@ export const api = {
 			limite_carpetas: limiteCarpetas,
 			limite_por_carpeta: limitePorCarpeta,
 			device,
+			umbral,
 			top_n: topN
 		}),
+
+	// Historial persistido en SQLite: lo unico que antes vivia solo en la
+	// memoria del proceso, y por eso se perdia de vista al reiniciar.
+	cobertura: () => pedir<Cobertura>('/api/corpus/cobertura'),
+	busquedas: (limite = 20) => pedir<{ busquedas: BusquedaGuardada[] }>('/api/busquedas', { limite }),
+	verBusqueda: (id: number) => pedir<ResultadoBusqueda>(`/api/busquedas/${id}`),
+	borrarBusqueda: (id: number) => enviar<{ borrada: number }>(`/api/busquedas/${id}/borrar`, {}),
 
 	base: BASE
 };

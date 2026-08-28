@@ -38,6 +38,7 @@ from facid.harness import (  # noqa: E402
     ManifestError, cargar_manifiesto, init_manifest, run_manifest,
 )
 from facid.busqueda import descubrir_corpus  # noqa: E402
+from facid.historial import HistorialStore  # noqa: E402
 from facid.store import EmbeddingStore  # noqa: E402
 from facid.util import sha256_file  # noqa: E402
 
@@ -657,6 +658,87 @@ def test_descubrir_corpus():
         check(True, "corpus inexistente -> FileNotFoundError")
 
 
+# ==================================================== 7c. historial
+def test_historial():
+    print("\n[7c] historial — corridas, busquedas y cobertura")
+    h = HistorialStore()
+
+    check(h.ultima_corrida() is None, "sin corridas cerradas, no hay 'ultima'")
+
+    cid = h.iniciar_corrida("indexado", "C:/corpus_falso", 10, 5)
+    check(h.ultima_corrida() is None,
+          "una corrida ABIERTA todavia no cuenta como ultima (podria no terminar)")
+
+    h.cerrar_corrida(cid, resultado={
+        "carpetas_vistas": 10, "fotos_vistas": 50, "indexadas_ok": 8,
+        "fallidas": 42, "en_cache": 30, "nuevas": 20, "detenido": True})
+    u = h.ultima_corrida()
+    check(u is not None and u["fotos_vistas"] == 50, "la corrida cerrada queda registrada")
+    check(u["detenido"] == 1, "queda asentado que se detuvo antes de terminar")
+    check(u["terminada_en"] is not None, "guarda cuando termino")
+
+    cid2 = h.iniciar_corrida("indexado", "C:/corpus_falso", None, None)
+    h.cerrar_corrida(cid2, error="RuntimeError: se cayo")
+    u2 = h.ultima_corrida()
+    check(u2["error"] == "RuntimeError: se cayo",
+          "una corrida que fallo tambien se registra, con su error")
+
+    # --- busquedas ---
+    resultado = {
+        "n_indexado": 20, "n_carpetas_indexadas": 4,
+        "resultados": [
+            {"consulta": "a.jpg", "error": None, "coincidencias": [
+                {"persona": "p1", "archivo": "1.jpg", "ruta": "p1/1.jpg", "score": 0.9},
+                {"persona": "p2", "archivo": "2.jpg", "ruta": "p2/2.jpg", "score": 0.1},
+            ]},
+            {"consulta": "b.jpg", "error": "NO_FACE", "coincidencias": []},
+        ],
+    }
+    bid = h.guardar_busqueda("laura", "C:/corpus_falso", 0.181, resultado)
+    check(len(h.busquedas()) == 1, "la busqueda queda en el historial")
+
+    leida = h.busqueda(bid)
+    check(leida is not None, "se puede releer una busqueda por id")
+    check(leida["persona"] == "laura" and leida["umbral"] == 0.181,
+          "conserva a quien se buscaba y con que umbral")
+    por_consulta = {r["consulta"]: r for r in leida["resultados"]}
+    check(set(por_consulta) == {"a.jpg", "b.jpg"}, "reconstruye las dos consultas")
+    check(len(por_consulta["a.jpg"]["coincidencias"]) == 2,
+          "conserva las coincidencias de la consulta que si corrio")
+    check(por_consulta["a.jpg"]["coincidencias"][0]["score"] == 0.9,
+          "conserva el orden del ranking (la mas alta primero)")
+    check(por_consulta["b.jpg"]["error"] == "NO_FACE",
+          "conserva el error de la consulta que no se pudo procesar")
+    check(any(c["score"] < 0.181 for c in por_consulta["a.jpg"]["coincidencias"]),
+          "guarda TODO el ranking, no solo lo que pasaba el umbral")
+
+    check(h.busqueda(99999) is None, "un id inexistente devuelve None, no truena")
+    check(h.borrar_busqueda(bid) is True, "se puede borrar una busqueda")
+    check(h.busqueda(bid) is None, "despues de borrar, ya no esta")
+    check(h.borrar_busqueda(bid) is False, "borrar dos veces devuelve False")
+
+    h.close()
+
+    h2 = HistorialStore()
+    check(h2.ultima_corrida() is not None, "el historial sobrevive reabrir")
+
+    # cobertura lee tablas de EmbeddingStore. Aqui ya existen (test_store las
+    # creo), pero debe responder cero -- no tronar -- aunque no hubiera nada.
+    cob = h2.cobertura("C:/corpus_que_no_existe")
+    check(cob["procesadas"] == 0, "cobertura de un corpus sin nada procesado da 0")
+    check(cob["procesadas"] == cob["con_rostro"] + cob["sin_rostro"],
+          "procesadas siempre cuadra con la suma del desglose")
+    h2.close()
+
+    # Base recien creada, sin EmbeddingStore de por medio: cobertura no debe
+    # tronar por tablas que no son suyas.
+    h3 = HistorialStore(db_path=TMP / "historial_solo.sqlite")
+    cob3 = h3.cobertura("C:/lo_que_sea")
+    check(cob3["procesadas"] == 0,
+          "cobertura responde 0 en una base sin tablas de embeddings, en vez de tronar")
+    h3.close()
+
+
 # ================================================== 8. provider en el reporte
 def _csv_min(destino, provs=None):
     """CSV minimo con 2 match y 2 non-match. provs: (pa, pb) por fila, o None."""
@@ -726,6 +808,7 @@ def main() -> int:
     test_dependencia()
     test_init_manifest()
     test_descubrir_corpus()
+    test_historial()
     test_harness_end_to_end()
     test_provider_en_reporte()
 

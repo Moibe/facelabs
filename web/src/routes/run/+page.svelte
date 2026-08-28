@@ -1,6 +1,8 @@
 <script lang="ts">
 	import {
 		api,
+		type BusquedaGuardada,
+		type Cobertura,
 		type CorpusResumen,
 		type IndexarEstado,
 		type ResultadoBusqueda
@@ -54,12 +56,36 @@
 	let progresoIndexar = $state<IndexarEstado | null>(null);
 	let errorIndexar = $state<string | null>(null);
 
+	// Lo que sobrevive reinicios: cuanto del corpus ya se proceso y que
+	// busquedas se han hecho. Sale de SQLite, no de la memoria del proceso.
+	let cobertura = $state<Cobertura | null>(null);
+	let historial = $state<BusquedaGuardada[]>([]);
+
+	async function refrescarHistorial() {
+		try {
+			cobertura = await api.cobertura();
+		} catch {
+			cobertura = null;
+		}
+		try {
+			historial = (await api.busquedas()).busquedas;
+		} catch {
+			historial = [];
+		}
+	}
+
 	$effect(() => {
 		api
 			.corpusResumen()
 			.then((r) => (corpus = r))
 			.catch(() => (corpus = null));
+		void refrescarHistorial();
 	});
+
+	const fecha = (iso: string) => {
+		const d = new Date(iso);
+		return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
+	};
 
 	const pctIndexar = $derived.by(() => {
 		if (!progresoIndexar || !progresoIndexar.total) return 0;
@@ -82,6 +108,7 @@
 				progresoIndexar = await api.indexarEstado();
 			}
 			if (progresoIndexar.error) errorIndexar = progresoIndexar.error;
+			await refrescarHistorial();
 		} catch (e) {
 			errorIndexar = e instanceof Error ? e.message : String(e);
 		} finally {
@@ -125,12 +152,37 @@
 				personaConsulta.trim(),
 				limiteCarpetas || null,
 				limitePorCarpeta || null,
-				device
+				device,
+				umbral
 			);
+			await refrescarHistorial();
 		} catch (e) {
 			errorBuscar = e instanceof Error ? e.message : String(e);
 		} finally {
 			buscando = false;
+		}
+	}
+
+	// Releer una búsqueda guardada no recalcula nada: sale tal cual de SQLite,
+	// con el ranking completo que se mostró entonces.
+	async function abrirBusqueda(b: BusquedaGuardada) {
+		errorBuscar = null;
+		try {
+			resultado = await api.verBusqueda(b.id);
+			personaConsulta = b.persona;
+			if (b.umbral !== null) umbral = b.umbral;
+		} catch (e) {
+			errorBuscar = e instanceof Error ? e.message : String(e);
+		}
+	}
+
+	async function borrarBusqueda(b: BusquedaGuardada) {
+		try {
+			await api.borrarBusqueda(b.id);
+			if (resultado?.busqueda_id === b.id) resultado = null;
+			await refrescarHistorial();
+		} catch (e) {
+			errorBuscar = e instanceof Error ? e.message : String(e);
 		}
 	}
 
@@ -207,6 +259,35 @@
 		<p class="tenue">
 			<code>{corpus.corpus_dir}</code> · {corpus.n_carpetas} carpeta(s) disponibles
 		</p>
+
+		{#if cobertura}
+			<div class="cobertura">
+				<div class="cifra">
+					<span class="n">{cobertura.procesadas.toLocaleString()}</span>
+					<span class="et">fotos ya procesadas</span>
+				</div>
+				<div class="cifra">
+					<span class="n">{cobertura.con_rostro.toLocaleString()}</span>
+					<span class="et">con rostro usable</span>
+				</div>
+				<div class="cifra">
+					<span class="n">{cobertura.sin_rostro.toLocaleString()}</span>
+					<span class="et">sin rostro detectable</span>
+				</div>
+			</div>
+			<p class="tenue">
+				{#if cobertura.total_ultimo_conteo}
+					De ~{cobertura.total_ultimo_conteo.toLocaleString()} vistas en el último recorrido completo.
+					El corpus crece solo, así que es una referencia, no un total al segundo.
+				{/if}
+				{#if cobertura.ultima_corrida?.terminada_en}
+					Última indexación: {fecha(cobertura.ultima_corrida.terminada_en)}
+					{#if cobertura.ultima_corrida.detenido}(detenida antes de terminar){/if}
+					{#if cobertura.ultima_corrida.error}— falló: {cobertura.ultima_corrida.error}{/if}.
+				{/if}
+			</p>
+		{/if}
+
 		<div class="controles">
 			<label>
 				carpetas a indexar
@@ -299,10 +380,41 @@
 		<p class="tenue error-texto">{errorBuscar}</p>
 	{/if}
 
+	{#if historial.length}
+		<div class="historial">
+			<h3>Búsquedas anteriores</h3>
+			<p class="tenue">
+				Guardadas en la base — sobreviven reinicios y recargas. Abrirlas no recalcula nada.
+			</p>
+			<ul class="lista-historial">
+				{#each historial as b (b.id)}
+					<li class:activa={resultado?.busqueda_id === b.id}>
+						<button type="button" class="enlace" onclick={() => abrirBusqueda(b)}>
+							{b.persona}
+						</button>
+						<span class="tenue">
+							{fecha(b.creada_en)} · contra {b.n_indexado ?? '?'} foto(s)
+							{#if b.umbral !== null}· umbral {b.umbral}{/if}
+						</span>
+						<button
+							type="button"
+							class="borrar"
+							title="Borrar del historial"
+							onclick={() => borrarBusqueda(b)}>×</button
+						>
+					</li>
+				{/each}
+			</ul>
+		</div>
+	{/if}
+
 	{#if resultado}
 		<p class="tenue resultado-accion">
 			Comparado contra {resultado.n_indexado} foto(s) indexada(s) de
 			{resultado.n_carpetas_indexadas} carpeta(s). Resaltadas las que igualan o superan el umbral.
+			{#if resultado.creada_en}
+				· <strong>Del historial</strong>, hecha el {fecha(resultado.creada_en)}.
+			{/if}
 		</p>
 		{#each resultado.resultados as r (r.consulta)}
 			<div class="consulta">
@@ -429,6 +541,83 @@
 		border-radius: 9px;
 		padding: 0.4rem 0.5rem;
 		width: 6ch;
+	}
+
+	.cobertura {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 1.6rem;
+		margin: 0.6rem 0 0.5rem;
+	}
+
+	.cifra {
+		display: flex;
+		flex-direction: column;
+	}
+
+	.cifra .n {
+		font-size: 1.5rem;
+		font-weight: 650;
+		font-family: ui-monospace, Consolas, monospace;
+		color: var(--ink);
+		line-height: 1.1;
+	}
+
+	.cifra .et {
+		font-size: 0.72rem;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		color: var(--ink-3);
+	}
+
+	.historial {
+		margin: 0.8rem 0;
+		padding-top: 0.7rem;
+		border-top: 1px solid var(--linea);
+	}
+
+	.lista-historial {
+		list-style: none;
+		margin: 0.4rem 0 0;
+		padding: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 0.25rem;
+	}
+
+	.lista-historial li {
+		display: flex;
+		align-items: baseline;
+		gap: 0.5rem;
+		padding: 0.3rem 0.5rem;
+		border-radius: 8px;
+		border: 1px solid transparent;
+		font-size: 0.82rem;
+	}
+
+	.lista-historial li:hover {
+		background: rgba(255, 255, 255, 0.05);
+	}
+
+	.lista-historial li.activa {
+		background: rgba(37, 99, 235, 0.18);
+		border-color: rgba(147, 197, 253, 0.4);
+	}
+
+	.borrar {
+		margin-left: auto;
+		font: inherit;
+		font-size: 1rem;
+		line-height: 1;
+		color: var(--ink-3);
+		background: none;
+		border: none;
+		padding: 0 0.3rem;
+		cursor: pointer;
+	}
+
+	.borrar:hover {
+		color: var(--mal);
 	}
 
 	.detener {
