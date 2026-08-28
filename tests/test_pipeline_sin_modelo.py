@@ -39,6 +39,7 @@ from facid.harness import (  # noqa: E402
 )
 from facid.busqueda import descubrir_corpus  # noqa: E402
 from facid.store import EmbeddingStore  # noqa: E402
+from facid.util import sha256_file  # noqa: E402
 
 FALLOS: list[str] = []
 
@@ -279,7 +280,27 @@ def test_store():
     check(st2.buscar_fallo(r_sin_rostro["image_sha256"], fp.model_pack, rt.rec_model_sha256,
                            fp.det_size, FacePolicy.STRICT) is not None,
           "la cache de fallos sobrevive reabrir el store (migracion idempotente)")
+
+    # --- stat cache: no releer el archivo si no cambio ---
+    img = escribir_img(d / "stat.png", 5)
+    sha_1 = st2.sha_de(img)
+    check(sha_1 == sha256_file(img), "sha_de devuelve el MISMO sha que leer el archivo")
+    check(st2.sha_de(img) == sha_1, "segunda llamada da el mismo sha (ahora desde stat cache)")
+
+    # Cambiar el contenido invalida: el tamaño y/o mtime cambian.
+    import time as _time
+    _time.sleep(0.01)
+    escribir_img(d / "stat.png", 6)  # otro id -> otros pixeles
+    sha_2 = st2.sha_de(img)
+    check(sha_2 == sha256_file(img),
+          "si el archivo cambia, sha_de NO devuelve el sha viejo cacheado")
+    check(sha_2 != sha_1, "el sha nuevo es distinto del anterior")
+
     st2.close()
+
+    st3 = EmbeddingStore()
+    check(st3.sha_de(img) == sha_2, "la stat cache sobrevive reabrir el store")
+    st3.close()
 
 
 # ============================================================= 4. calibracion
@@ -623,6 +644,11 @@ def test_descubrir_corpus():
     con_limite_fotos = descubrir_corpus(d, limite_por_carpeta=1)
     check(all(len(v) == 1 for v in con_limite_fotos.values()),
           "limite_por_carpeta corta fotos por persona, no elimina personas")
+
+    # 0 = sin limite (lo que dice la UI). Interpretarlo literal como "las
+    # primeras cero carpetas" dejaba el corpus vacio en silencio.
+    cero = descubrir_corpus(d, limite_carpetas=0, limite_por_carpeta=0)
+    check(cero == sin_limite, "0 en los limites significa SIN LIMITE, no 'ninguna'")
 
     try:
         descubrir_corpus(d / "no_existe")

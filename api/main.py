@@ -595,6 +595,10 @@ _indexar_estado: dict[str, Any] = {
     "actual": 0,
     "total": 0,
     "archivo": "",
+    # Desglose del avance: sin esto, el contador corriendo de 1 a 85k se ve
+    # igual esté saltando cache o extrayendo de verdad.
+    "en_cache": 0,
+    "nuevas": 0,
     "resultado": None,
     "error": None,
 }
@@ -621,14 +625,14 @@ def corpus_indexar(p: PeticionIndexarCorpus) -> dict[str, Any]:
             raise HTTPException(409, "Ya hay una indexacion en curso.")
         _indexar_estado.update({
             "en_curso": True, "etapa": "cargando_modelo",
-            "actual": 0, "total": 0, "archivo": "", "resultado": None, "error": None,
+            "actual": 0, "total": 0, "archivo": "", "en_cache": 0, "nuevas": 0,
+            "resultado": None, "error": None,
         })
     _cancelar_indexar.clear()
 
-    def _reportar(actual: int, total: int, archivo: str, etapa: str) -> None:
+    def _reportar(info: dict[str, Any]) -> None:
         with _indexar_lock:
-            _indexar_estado.update(
-                {"etapa": etapa, "actual": actual, "total": total, "archivo": archivo})
+            _indexar_estado.update(info)
 
     def _trabajo() -> None:
         try:

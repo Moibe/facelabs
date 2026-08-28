@@ -26,7 +26,6 @@ from .compare import compare
 from .config import DEFAULT_FACE_POLICY
 from .extract import extract_embedding
 from .store import EmbeddingStore
-from .util import sha256_file
 
 # Las 7 primeras son las que pide el handoff, en ese orden. Las demas son
 # auditoria: sin ellas, un par que fallo la extraccion seria una fila vacia
@@ -141,7 +140,7 @@ def _extraer_todas(pares, runtime, store: EmbeddingStore, face_policy: str,
                 on_progreso(k, len(rutas), ruta.name, "extraccion")
             continue
 
-        sha = sha256_file(ruta)
+        sha = store.sha_de(ruta)
         fila = None if force else store.buscar(
             sha, fp.model_pack, runtime.rec_model_sha256, fp.det_size, face_policy)
 

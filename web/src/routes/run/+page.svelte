@@ -245,7 +245,9 @@
 					{#if progresoIndexar.etapa === 'cargando_modelo'}
 						Cargando el modelo…
 					{:else if progresoIndexar.etapa === 'indexando'}
-						Indexando {progresoIndexar.actual}/{progresoIndexar.total} —
+						Indexando {progresoIndexar.actual}/{progresoIndexar.total} ·
+						<strong>{progresoIndexar.en_cache}</strong> ya estaban ·
+						<strong>{progresoIndexar.nuevas}</strong> nuevas —
 						<code>{progresoIndexar.archivo}</code>
 					{:else if progresoIndexar.etapa === 'pausado'}
 						Pausado — hay una búsqueda en curso, reanuda sola al terminar (
@@ -264,7 +266,8 @@
 				{#if progresoIndexar.resultado.fallidas}
 					· {progresoIndexar.resultado.fallidas} fallida(s)
 				{/if}
-				.
+				· <strong>{progresoIndexar.resultado.nuevas}</strong> procesadas esta vez,
+				{progresoIndexar.resultado.en_cache} ya estaban.
 				{#if progresoIndexar.resultado.detenido}
 					Lo ya guardado no se pierde — dale "Indexar" de nuevo para seguir donde quedó.
 				{/if}

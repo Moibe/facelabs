@@ -280,11 +280,16 @@ export type IndexarEstado = {
 	actual: number;
 	total: number;
 	archivo: string;
+	/** Cuántas de las `actual` salieron de caché vs se procesaron de verdad. */
+	en_cache: number;
+	nuevas: number;
 	resultado: {
 		carpetas_vistas: number;
 		fotos_vistas: number;
 		indexadas_ok: number;
 		fallidas: number;
+		en_cache: number;
+		nuevas: number;
 		detenido: boolean;
 	} | null;
 	error: string | null;

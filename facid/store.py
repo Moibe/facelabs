@@ -19,7 +19,7 @@ import numpy as np
 
 from .config import EMBEDDINGS_DIR, INDEX_DB, ensure_dirs
 from .errors import ErrorCode, FacePolicy
-from .util import utc_now_iso
+from .util import sha256_file, utc_now_iso
 
 ESQUEMA = """
 CREATE TABLE IF NOT EXISTS embeddings (
@@ -64,6 +64,19 @@ CREATE TABLE IF NOT EXISTS fallos (
     created_at          TEXT    NOT NULL
 );
 
+-- Evita releer un archivo entero solo para saber su sha256. La identidad
+-- canonica sigue siendo el CONTENIDO (ver util.sha256_file); esto es puro
+-- atajo de I/O: si (ruta, tamaño, mtime) no cambiaron, el sha tampoco.
+-- Mismo compromiso que hace git con su stat cache: un archivo reemplazado
+-- conservando tamaño Y mtime exactos daria un sha viejo, pero eso no pasa
+-- por accidente.
+CREATE TABLE IF NOT EXISTS stat_cache (
+    source_path TEXT PRIMARY KEY,
+    size        INTEGER NOT NULL,
+    mtime_ns    INTEGER NOT NULL,
+    sha256      TEXT    NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS ix_emb_sha ON embeddings (image_sha256);
 CREATE INDEX IF NOT EXISTS ix_fallos_sha ON fallos (image_sha256);
 """
@@ -89,6 +102,7 @@ class EmbeddingStore:
         self.conn.executescript(ESQUEMA)
         self.conn.commit()
         self._migrar_rec_model_sha256_en_fallos()
+        self._stat_pendientes = 0
 
     def _migrar_rec_model_sha256_en_fallos(self) -> None:
         """Bases de datos creadas antes de la cache de fallos no tienen esta
@@ -102,7 +116,48 @@ class EmbeddingStore:
             self.conn.commit()
 
     def close(self) -> None:
+        if self._stat_pendientes:
+            self.conn.commit()
+            self._stat_pendientes = 0
         self.conn.close()
+
+    # ------------------------------------------------------------ stat cache
+    def sha_de(self, ruta: Path) -> str:
+        """sha256 del archivo, sin releerlo si (ruta, tamaño, mtime) no cambiaron.
+
+        Recorrer un corpus grande ya indexado costaba leer y hashear CADA
+        archivo solo para descubrir que ya estaba en cache — decenas de miles
+        de lecturas completas de disco por corrida. Un stat() cuesta
+        microsegundos y responde lo mismo en la practica.
+        """
+        try:
+            st = ruta.stat()
+        except OSError:
+            # Que el error salga de donde debe salir (extract/lectura), no aqui.
+            return sha256_file(ruta)
+
+        clave = str(ruta)
+        fila = self.conn.execute(
+            "SELECT sha256 FROM stat_cache WHERE source_path=? AND size=? AND mtime_ns=?",
+            (clave, st.st_size, st.st_mtime_ns),
+        ).fetchone()
+        if fila is not None:
+            return fila["sha256"]
+
+        sha = sha256_file(ruta)
+        self.conn.execute(
+            "INSERT OR REPLACE INTO stat_cache (source_path, size, mtime_ns, sha256) "
+            "VALUES (?,?,?,?)",
+            (clave, st.st_size, st.st_mtime_ns, sha),
+        )
+        # Commit por lotes: un fsync por archivo sobre 85k archivos domina el
+        # tiempo total. Perder los ultimos si el proceso muere es inofensivo
+        # (se vuelven a hashear la proxima vez).
+        self._stat_pendientes += 1
+        if self._stat_pendientes >= 500:
+            self.conn.commit()
+            self._stat_pendientes = 0
+        return sha
 
     def __enter__(self):
         return self

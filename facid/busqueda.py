@@ -26,23 +26,39 @@ from __future__ import annotations
 
 import threading
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from .compare import compare
 from .extract import extract_embedding
-from .harness import EXTENSIONES, ProgresoCB
+from .harness import EXTENSIONES
 from .store import EmbeddingStore
-from .util import sha256_file
+
+# Progreso de indexado. Recibe un dict en vez de argumentos sueltos (a
+# diferencia de harness.ProgresoCB) porque aqui interesa distinguir cuanto
+# del avance es trabajo real y cuanto es cache: sin ese desglose, el contador
+# corriendo de 1 a 85k se ve igual venga de donde venga.
+ProgresoIndexCB = Callable[[dict[str, Any]], None]
 
 
 def descubrir_corpus(corpus_dir: str | Path, *,
                      limite_carpetas: int | None = None,
                      limite_por_carpeta: int | None = None) -> dict[str, list[Path]]:
     """Como descubrir_personas, pero con limites: el corpus puede tener
-    decenas de miles de fotos y no siempre se quiere tocar todo."""
+    decenas de miles de fotos y no siempre se quiere tocar todo.
+
+    0 (o negativo) significa SIN LIMITE, igual que None. Es lo que dice la UI
+    y lo que espera cualquiera que escriba 0 en el campo; interpretarlo
+    literal como "las primeras cero carpetas" hacia que la corrida terminara
+    al instante sin indexar nada y sin avisar por que.
+    """
     raiz = Path(corpus_dir)
     if not raiz.is_dir():
         raise FileNotFoundError(f"no existe el corpus: {raiz}")
+
+    if limite_carpetas is not None and limite_carpetas <= 0:
+        limite_carpetas = None
+    if limite_por_carpeta is not None and limite_por_carpeta <= 0:
+        limite_por_carpeta = None
 
     carpetas = sorted(p for p in raiz.iterdir() if p.is_dir())
     if limite_carpetas is not None:
@@ -63,7 +79,7 @@ def indexar_corpus(corpus_dir: str | Path, runtime, *,
                    limite_carpetas: int | None = None,
                    limite_por_carpeta: int | None = None,
                    face_policy: str = "strict",
-                   on_progreso: ProgresoCB | None = None,
+                   on_progreso: ProgresoIndexCB | None = None,
                    pausable: threading.Event | None = None,
                    cancelable: threading.Event | None = None) -> dict[str, Any]:
     """Extrae y cachea embeddings del corpus. No compara nada todavia.
@@ -87,29 +103,39 @@ def indexar_corpus(corpus_dir: str | Path, runtime, *,
     fp = runtime.fingerprint
     ok = 0
     fallidas = 0
+    en_cache = 0
+    nuevas = 0
     detenido = False
+
+    def _avisar(actual: int, archivo: str, etapa: str) -> None:
+        if on_progreso:
+            on_progreso({"actual": actual, "total": len(rutas), "archivo": archivo,
+                         "etapa": etapa, "en_cache": en_cache, "nuevas": nuevas})
+
     try:
         for k, ruta in enumerate(rutas, 1):
             while pausable is not None and not pausable.is_set():
                 if cancelable is not None and cancelable.is_set():
                     break
-                if on_progreso:
-                    on_progreso(k - 1, len(rutas), "", "pausado")
+                _avisar(k - 1, "", "pausado")
                 pausable.wait(timeout=0.5)
             if cancelable is not None and cancelable.is_set():
                 detenido = True
                 break
-            sha = sha256_file(ruta)
+            sha = store.sha_de(ruta)
             fila = store.buscar(sha, fp.model_pack, runtime.rec_model_sha256,
                                 fp.det_size, face_policy)
             if fila is not None:
                 ok += 1
+                en_cache += 1
             elif store.buscar_fallo(sha, fp.model_pack, runtime.rec_model_sha256,
                                     fp.det_size, face_policy) is not None:
                 # Ya sabemos que esto falla bajo esta config exacta: no vale
                 # la pena volver a correr el detector para el mismo resultado.
                 fallidas += 1
+                en_cache += 1
             else:
+                nuevas += 1
                 r = extract_embedding(ruta, runtime, face_policy=face_policy)
                 if r["error"] is None:
                     store.guardar(r, runtime, face_policy)
@@ -117,8 +143,7 @@ def indexar_corpus(corpus_dir: str | Path, runtime, *,
                 else:
                     store.registrar_fallo(r, runtime, face_policy)
                     fallidas += 1
-            if on_progreso:
-                on_progreso(k, len(rutas), ruta.name, "indexando")
+            _avisar(k, ruta.name, "indexando")
     finally:
         store.close()
 
@@ -127,6 +152,8 @@ def indexar_corpus(corpus_dir: str | Path, runtime, *,
         "fotos_vistas": len(rutas),
         "indexadas_ok": ok,
         "fallidas": fallidas,
+        "en_cache": en_cache,
+        "nuevas": nuevas,
         "detenido": detenido,
     }
 
@@ -149,7 +176,7 @@ def buscar(query_paths: list[str | Path], corpus_dir: str | Path, runtime, *,
         indexado: list[tuple[str, str, Any]] = []
         for persona, fotos in corpus.items():
             for f in fotos:
-                sha = sha256_file(f)
+                sha = store.sha_de(f)
                 fila = store.buscar(sha, fp.model_pack, runtime.rec_model_sha256,
                                     fp.det_size, face_policy)
                 if fila is not None:
@@ -158,7 +185,7 @@ def buscar(query_paths: list[str | Path], corpus_dir: str | Path, runtime, *,
         resultados = []
         for qp in query_paths:
             qpath = Path(qp)
-            sha = sha256_file(qpath)
+            sha = store.sha_de(qpath)
             fila = store.buscar(sha, fp.model_pack, runtime.rec_model_sha256,
                                 fp.det_size, face_policy)
             if fila is not None:
