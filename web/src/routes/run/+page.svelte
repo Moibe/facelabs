@@ -202,7 +202,7 @@
 	<h2>1 · Fotos de referencia</h2>
 	<label class="campo">
 		<span>Persona que buscas</span>
-		<input type="text" placeholder="ej. mi-hermana" bind:value={personaConsulta} />
+		<input type="text" bind:value={personaConsulta} />
 	</label>
 	<p class="tenue">
 		Se guardan en <code>data/{personaConsulta.trim() || '…'}/</code> — el mismo lugar que usa
