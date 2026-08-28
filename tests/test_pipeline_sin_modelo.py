@@ -243,7 +243,43 @@ def test_store():
     r3 = extract_embedding(d / "fantasma.png", rt)
     st.registrar_fallo(r3, rt, FacePolicy.STRICT)
     check(st.resumen()["fallos"] >= 1, "los fallos quedan registrados en SQLite")
+
+    # --- cache de fallos: no reintentar lo que ya sabemos que falla ---
+    r_sin_rostro = extract_embedding(escribir_img(d / "c.png", 7), rt)  # id 7: no esta en `faces`
+    check(r_sin_rostro["error"] == ErrorCode.NO_FACE, "fixture: c.png da NO_FACE de verdad")
+    st.registrar_fallo(r_sin_rostro, rt, FacePolicy.STRICT)
+
+    check(st.buscar_fallo(r_sin_rostro["image_sha256"], fp.model_pack, rt.rec_model_sha256,
+                          fp.det_size, FacePolicy.STRICT) is not None,
+          "NO_FACE cacheado se encuentra bajo la MISMA politica")
+    check(st.buscar_fallo(r_sin_rostro["image_sha256"], fp.model_pack, rt.rec_model_sha256,
+                          fp.det_size, FacePolicy.LARGEST) is not None,
+          "NO_FACE cacheado tambien vale bajo OTRA politica (cero rostros no depende de eso)")
+    check(st.buscar_fallo(r_sin_rostro["image_sha256"], fp.model_pack, "otro_sha",
+                          fp.det_size, FacePolicy.STRICT) is None,
+          "cambiar el modelo invalida la cache de fallos, igual que la de exitos")
+
+    # MULTIPLE_FACES bajo strict: SI depende de la politica.
+    r_multiple = extract_embedding(d / "b.png", rt, face_policy=FacePolicy.STRICT)
+    check(r_multiple["error"] == ErrorCode.MULTIPLE_FACES,
+          "fixture: b.png (2 rostros) da MULTIPLE_FACES bajo strict")
+    st.registrar_fallo(r_multiple, rt, FacePolicy.STRICT)
+    check(st.buscar_fallo(r_multiple["image_sha256"], fp.model_pack, rt.rec_model_sha256,
+                          fp.det_size, FacePolicy.STRICT) is not None,
+          "MULTIPLE_FACES cacheado se encuentra bajo la MISMA politica (strict)")
+    check(st.buscar_fallo(r_multiple["image_sha256"], fp.model_pack, rt.rec_model_sha256,
+                          fp.det_size, FacePolicy.LARGEST) is None,
+          "MULTIPLE_FACES cacheado NO se reusa bajo 'largest': ahi si podria tener exito")
+
     st.close()
+
+    # Migracion: abrir el MISMO archivo de nuevo no debe tronar aunque ya
+    # tenga la columna, y la cache de fallos sigue funcionando tras reabrir.
+    st2 = EmbeddingStore()
+    check(st2.buscar_fallo(r_sin_rostro["image_sha256"], fp.model_pack, rt.rec_model_sha256,
+                           fp.det_size, FacePolicy.STRICT) is not None,
+          "la cache de fallos sobrevive reabrir el store (migracion idempotente)")
+    st2.close()
 
 
 # ============================================================= 4. calibracion

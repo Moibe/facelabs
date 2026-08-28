@@ -18,7 +18,7 @@ from typing import Any
 import numpy as np
 
 from .config import EMBEDDINGS_DIR, INDEX_DB, ensure_dirs
-from .errors import FacePolicy
+from .errors import ErrorCode, FacePolicy
 from .util import utc_now_iso
 
 ESQUEMA = """
@@ -59,12 +59,21 @@ CREATE TABLE IF NOT EXISTS fallos (
     all_det_scores      TEXT,
     face_policy         TEXT,
     model_pack          TEXT,
+    rec_model_sha256    TEXT,
     det_size            TEXT,
     created_at          TEXT    NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS ix_emb_sha ON embeddings (image_sha256);
+CREATE INDEX IF NOT EXISTS ix_fallos_sha ON fallos (image_sha256);
 """
+
+# Fallos donde el resultado NO depende de face_policy: cero rostros o un
+# archivo corrupto siguen siendo lo mismo sin importar que politica de
+# seleccion este activa. MULTIPLE_FACES (y, por las dudas, INVALID_EMBEDDING
+# si hubo mas de un rostro) SI dependen: bajo 'strict' fallan, bajo 'largest'
+# el mismo archivo podria tener exito con otro rostro elegido.
+_FALLOS_INDEPENDIENTES_DE_POLICY = (ErrorCode.NO_FACE, ErrorCode.UNREADABLE_IMAGE)
 
 
 class EmbeddingStore:
@@ -79,6 +88,18 @@ class EmbeddingStore:
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(ESQUEMA)
         self.conn.commit()
+        self._migrar_rec_model_sha256_en_fallos()
+
+    def _migrar_rec_model_sha256_en_fallos(self) -> None:
+        """Bases de datos creadas antes de la cache de fallos no tienen esta
+        columna. ALTER TABLE ADD COLUMN es seguro sobre datos existentes: las
+        filas viejas quedan con NULL, que simplemente nunca calza con un
+        rec_model_sha256 real — se reintentan una vez mas y de ahi en
+        adelante ya quedan cacheadas con la columna llena."""
+        cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(fallos)")}
+        if "rec_model_sha256" not in cols:
+            self.conn.execute("ALTER TABLE fallos ADD COLUMN rec_model_sha256 TEXT")
+            self.conn.commit()
 
     def close(self) -> None:
         self.conn.close()
@@ -111,6 +132,29 @@ class EmbeddingStore:
         if not (self.emb_dir.parent.parent / fila["npy_path"]).exists() \
                 and not Path(fila["npy_path"]).exists():
             return None  # el .npy se borro; hay que reprocesar
+        return fila
+
+    def buscar_fallo(self, image_sha256: str, model_pack: str, rec_model_sha256: str,
+                     det_size: str, face_policy: str) -> sqlite3.Row | None:
+        """Devuelve el fallo cacheado si sigue siendo valido bajo `face_policy`.
+
+        Solo NO_FACE y UNREADABLE_IMAGE son independientes de la politica: cero
+        rostros o un archivo corrupto no cambian si mañana corres con otra
+        seleccion. MULTIPLE_FACES (y por las dudas INVALID_EMBEDDING) SI
+        dependen — bajo 'strict' fallan, bajo 'largest' el mismo archivo
+        podria tener exito con otro rostro elegido — asi que esos solo cuentan
+        si la politica no cambio desde que se registro el fallo.
+        """
+        fila = self.conn.execute(
+            "SELECT * FROM fallos WHERE image_sha256=? AND model_pack=? "
+            "AND rec_model_sha256=? AND det_size=? ORDER BY created_at DESC LIMIT 1",
+            (image_sha256, model_pack, rec_model_sha256, det_size),
+        ).fetchone()
+        if fila is None:
+            return None
+        if fila["error"] not in _FALLOS_INDEPENDIENTES_DE_POLICY \
+                and fila["face_policy"] != face_policy:
+            return None
         return fila
 
     def cargar_embedding(self, fila: sqlite3.Row | dict) -> np.ndarray:
@@ -165,14 +209,15 @@ class EmbeddingStore:
         self.conn.execute(
             """INSERT INTO fallos (image_sha256, source_path, error, error_message,
                    n_faces_detected, all_det_scores, face_policy, model_pack,
-                   det_size, created_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                   rec_model_sha256, det_size, created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 resultado.get("image_sha256"), resultado["source_path"],
                 resultado["error"], resultado.get("error_message"),
                 resultado.get("n_faces_detected"),
                 json.dumps(resultado.get("all_det_scores")),
-                face_policy, fp.model_pack, fp.det_size, utc_now_iso(),
+                face_policy, fp.model_pack, runtime.rec_model_sha256,
+                fp.det_size, utc_now_iso(),
             ),
         )
         self.conn.commit()

@@ -158,6 +158,18 @@ def _extraer_todas(pares, runtime, store: EmbeddingStore, face_policy: str,
             }
             if verbose:
                 print(f"  [{k}/{len(rutas)}] cache          {ruta.name}")
+        elif not force and (fallo_cacheado := store.buscar_fallo(
+                sha, fp.model_pack, runtime.rec_model_sha256, fp.det_size, face_policy)):
+            # Ya sabemos que esto falla bajo esta config exacta (mismo modelo,
+            # det_size y face_policy compatible): no vale la pena volver a
+            # correr el detector para llegar al mismo resultado.
+            resultados[clave] = {
+                "ok": False, "error": fallo_cacheado["error"], "sha256": sha,
+                "det_score": None, "n_faces": fallo_cacheado["n_faces_detected"],
+                "face_selection": None, "provider": None,
+            }
+            if verbose:
+                print(f"  [{k}/{len(rutas)}] cache-fallo    {fallo_cacheado['error']}  {ruta.name}")
         else:
             r = extract_embedding(ruta, runtime, face_policy=face_policy)
             if r["error"] is None:

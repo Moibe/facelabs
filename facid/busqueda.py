@@ -104,6 +104,11 @@ def indexar_corpus(corpus_dir: str | Path, runtime, *,
                                 fp.det_size, face_policy)
             if fila is not None:
                 ok += 1
+            elif store.buscar_fallo(sha, fp.model_pack, runtime.rec_model_sha256,
+                                    fp.det_size, face_policy) is not None:
+                # Ya sabemos que esto falla bajo esta config exacta: no vale
+                # la pena volver a correr el detector para el mismo resultado.
+                fallidas += 1
             else:
                 r = extract_embedding(ruta, runtime, face_policy=face_policy)
                 if r["error"] is None:
