@@ -70,8 +70,12 @@
 
 	// -------------------------------------------- 1. corpus: resumen/indexar
 	let corpus = $state<CorpusResumen | null>(null);
-	let limiteCarpetas = $state(10);
-	let limitePorCarpeta = $state(5);
+	// 0 = sin limite. Empezaron acotados cuando reindexar era caro; con la
+	// cache de fallos y la stat cache, recorrer todo lo ya conocido cuesta
+	// segundos, y un limite chico solo sirve para dejar fuera de la busqueda
+	// partes del corpus que ya estaban indexadas.
+	let limiteCarpetas = $state(0);
+	let limitePorCarpeta = $state(0);
 	// Default 'cpu' a proposito (distinto de Entorno): esta maquina no tiene
 	// GPU, y una indexacion mal apuntada aqui puede tardar horas antes de que
 	// alguien note el error, no segundos.
