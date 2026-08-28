@@ -407,6 +407,50 @@ def test_historial_api():
     check(j["procesadas"] == j["con_rostro"] + j["sin_rostro"],
           "procesadas = con rostro + sin rostro (no se cuenta nada dos veces)")
 
+    # --- fallos del corpus: poder VER las que no dieron rostro ---
+    from facid.store import EmbeddingStore
+
+    class RtFalso:
+        class fingerprint:
+            model_pack = "fake"
+            det_size = "640x640"
+            insightface_version = None
+            onnxruntime_version = None
+            facid_version = "test"
+        rec_model_sha256 = "c" * 64
+        rec_model_file = "f.onnx"
+        det_model_file = "d.onnx"
+        det_model_sha256 = "e" * 64
+        provider_activo = "FakeExecutionProvider"
+
+    with EmbeddingStore() as st:
+        st.registrar_fallo({
+            "image_sha256": "f" * 64,
+            "source_path": str(CORPUS / "candidato_a" / "01.jpg"),
+            "error": "NO_FACE", "error_message": "sin rostro",
+            "n_faces_detected": 0, "all_det_scores": [],
+        }, RtFalso(), "strict")
+        # Un fallo FUERA del corpus no debe salir en esta lista.
+        st.registrar_fallo({
+            "image_sha256": "0" * 64,
+            "source_path": str(DATA / "yo" / "01_ancla.jpg"),
+            "error": "NO_FACE", "error_message": "sin rostro",
+            "n_faces_detected": 0, "all_det_scores": [],
+        }, RtFalso(), "strict")
+
+    r = cli.get("/api/corpus/fallos")
+    check(r.status_code == 200, f"fallos del corpus responde 200 (dio {r.status_code})")
+    rutas = [f["ruta"] for f in r.json()["fallos"]]
+    check("candidato_a/01.jpg" in rutas, f"lista el fallo del corpus (dio {rutas})")
+    check(all("yo/" not in x for x in rutas),
+          "NO incluye fallos de data/: esta lista es del corpus")
+    check(all(not x.startswith(("C:", "/")) for x in rutas),
+          "las rutas vienen relativas al corpus, listas para /api/corpus/foto")
+    r2 = cli.get("/api/corpus/foto", params={"ruta": rutas[0]})
+    check(r2.status_code == 200, "esa ruta SI se puede pedir a /api/corpus/foto")
+    check(len(cli.get("/api/corpus/fallos", params={"limite": 1}).json()["fallos"]) <= 1,
+          "respeta el limite")
+
     r = cli.get("/api/busquedas")
     check(r.status_code == 200 and "busquedas" in r.json(), "lista de busquedas responde 200")
     n_antes = len(r.json()["busquedas"])

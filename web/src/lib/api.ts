@@ -352,6 +352,14 @@ export type Cobertura = {
 	ultima_corrida: CorridaRegistrada | null;
 };
 
+export type FalloCorpus = {
+	/** Relativa al corpus: se sirve con urlFotoCorpus(). */
+	ruta: string;
+	error: string;
+	error_message: string | null;
+	n_faces_detected: number | null;
+};
+
 export type BusquedaGuardada = {
 	id: number;
 	persona: string;
@@ -446,6 +454,10 @@ export const api = {
 	// Historial persistido en SQLite: lo unico que antes vivia solo en la
 	// memoria del proceso, y por eso se perdia de vista al reiniciar.
 	cobertura: () => pedir<Cobertura>('/api/corpus/cobertura'),
+	// Para poder VER las que no dieron rostro: un conteo no dice si son
+	// recortes malos o fotos que de verdad no traen cara.
+	fallosCorpus: (limite = 60) =>
+		pedir<{ limite: number; fallos: FalloCorpus[] }>('/api/corpus/fallos', { limite }),
 	busquedas: (limite = 20) => pedir<{ busquedas: BusquedaGuardada[] }>('/api/busquedas', { limite }),
 	verBusqueda: (id: number) => pedir<ResultadoBusqueda>(`/api/busquedas/${id}`),
 	borrarBusqueda: (id: number) => enviar<{ borrada: number }>(`/api/busquedas/${id}/borrar`, {}),

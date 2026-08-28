@@ -4,6 +4,7 @@
 		type BusquedaGuardada,
 		type Cobertura,
 		type CorpusResumen,
+		type FalloCorpus,
 		type IndexarEstado,
 		type Personas,
 		type ResultadoBusqueda
@@ -88,6 +89,26 @@
 	// busquedas se han hecho. Sale de SQLite, no de la memoria del proceso.
 	let cobertura = $state<Cobertura | null>(null);
 	let historial = $state<BusquedaGuardada[]>([]);
+
+	// Las que no dieron rostro, para poder verlas: el conteo solo no dice si
+	// son recortes malos o fotos que de verdad no traen cara.
+	let fallos = $state<FalloCorpus[] | null>(null);
+	let cargandoFallos = $state(false);
+
+	async function verFallos() {
+		if (fallos) {
+			fallos = null; // segundo clic: cerrar
+			return;
+		}
+		cargandoFallos = true;
+		try {
+			fallos = (await api.fallosCorpus(60)).fallos;
+		} catch (e) {
+			errorIndexar = e instanceof Error ? e.message : String(e);
+		} finally {
+			cargandoFallos = false;
+		}
+	}
 
 	async function refrescarHistorial() {
 		try {
@@ -281,11 +302,52 @@
 					<span class="n">{cobertura.con_rostro.toLocaleString()}</span>
 					<span class="et">con rostro usable</span>
 				</div>
-				<div class="cifra">
+				<button
+					type="button"
+					class="cifra cifra-clic"
+					class:abierta={!!fallos}
+					onclick={verFallos}
+					disabled={cargandoFallos || !cobertura.sin_rostro}
+					title={cobertura.sin_rostro ? 'Ver cuáles' : 'No hay ninguna'}
+				>
 					<span class="n">{cobertura.sin_rostro.toLocaleString()}</span>
-					<span class="et">sin rostro detectable</span>
-				</div>
+					<span class="et">
+						sin rostro detectable
+						{#if cobertura.sin_rostro}
+							· {cargandoFallos ? 'abriendo…' : fallos ? 'ocultar' : 'ver cuáles'}
+						{/if}
+					</span>
+				</button>
 			</div>
+
+			{#if fallos}
+				{#if !fallos.length}
+					<p class="tenue">No quedó ninguna registrada.</p>
+				{:else}
+					<p class="tenue">
+						Las {fallos.length} más recientes. Sirven para juzgar si lo que queda son recortes
+						demasiado pegados a la cara o fotos que de verdad no traen una.
+					</p>
+					<div class="tira">
+						{#each fallos as f (f.ruta)}
+							<figure>
+								<img
+									src={api.urlFotoCorpus(f.ruta)}
+									alt={f.ruta}
+									loading="lazy"
+									title={f.error_message ?? f.error}
+								/>
+								<figcaption>
+									<span class="mal"
+										>{f.error}{#if f.n_faces_detected}
+											· {f.n_faces_detected} rostros{/if}</span
+									><br />{f.ruta.split('/')[0]}
+								</figcaption>
+							</figure>
+						{/each}
+					</div>
+				{/if}
+			{/if}
 			<p class="tenue">
 				{#if cobertura.total_ultimo_conteo}
 					De ~{cobertura.total_ultimo_conteo.toLocaleString()} vistas en el último recorrido completo.
@@ -722,6 +784,29 @@
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
 		color: var(--ink-3);
+	}
+
+	/* La cifra clickeable se ve como las otras, pero con afordancia: el propio
+	   rotulo dice "ver cuales" en vez de dejarlo al color o al cursor. */
+	.cifra-clic {
+		font: inherit;
+		text-align: left;
+		background: none;
+		border: 1px solid transparent;
+		border-radius: 9px;
+		padding: 0.15rem 0.4rem;
+		margin: -0.15rem -0.4rem;
+		cursor: pointer;
+	}
+
+	.cifra-clic:hover:not(:disabled),
+	.cifra-clic.abierta {
+		background: rgba(255, 255, 255, 0.06);
+		border-color: rgba(255, 255, 255, 0.18);
+	}
+
+	.cifra-clic:disabled {
+		cursor: default;
 	}
 
 	.historial {

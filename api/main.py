@@ -762,6 +762,33 @@ def corpus_cobertura() -> dict[str, Any]:
         return hist.cobertura(CORPUS_DIR)
 
 
+@app.get("/api/corpus/fallos")
+def corpus_fallos(limite: int = 60) -> dict[str, Any]:
+    """Las fotos del corpus que no dieron rostro, con su ruta ya servible.
+
+    La tabla guarda rutas absolutas; se devuelven relativas al corpus para
+    que el front las pida por /api/corpus/foto, que es la unica via
+    sandboxeada para servirlas.
+    """
+    with HistorialStore() as hist:
+        filas = hist.fallos_del_corpus(CORPUS_DIR, limite)
+
+    raiz = CORPUS_DIR.resolve()
+    salida = []
+    for f in filas:
+        try:
+            rel = Path(f["source_path"]).resolve().relative_to(raiz).as_posix()
+        except (ValueError, OSError):
+            continue  # ya no cae dentro del corpus: no hay como servirla
+        salida.append({
+            "ruta": rel,
+            "error": f["error"],
+            "error_message": f["error_message"],
+            "n_faces_detected": f["n_faces_detected"],
+        })
+    return {"limite": limite, "fallos": salida}
+
+
 @app.get("/api/busquedas")
 def listar_busquedas(limite: int = 20) -> dict[str, Any]:
     with HistorialStore() as hist:

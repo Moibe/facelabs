@@ -244,6 +244,29 @@ class HistorialStore:
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (nombre,)
         ).fetchone() is not None
 
+    def fallos_del_corpus(self, corpus_dir: str | Path,
+                          limite: int = 60) -> list[dict[str, Any]]:
+        """Las fotos del corpus que NO dieron rostro, para poder verlas.
+
+        Un conteo de fallos no dice si el problema son recortes malos o
+        imagenes que de verdad no traen cara; verlas si. Se agrupa por
+        image_sha256 porque la tabla de fallos es un log: la misma foto puede
+        tener varias filas de intentos distintos.
+        """
+        if not self._existe_tabla("fallos"):
+            return []
+        prefijo = str(Path(corpus_dir))
+        n = len(prefijo)
+        return [dict(r) for r in self.conn.execute(
+            """SELECT source_path, error, error_message, n_faces_detected,
+                      MAX(created_at) AS created_at
+               FROM fallos
+               WHERE substr(source_path,1,?)=?
+               GROUP BY image_sha256
+               ORDER BY created_at DESC
+               LIMIT ?""",
+            (n, prefijo, limite))]
+
     def cobertura(self, corpus_dir: str | Path) -> dict[str, Any]:
         """Cuantas fotos del corpus ya se procesaron alguna vez.
 
