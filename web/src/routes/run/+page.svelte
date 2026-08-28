@@ -5,6 +5,7 @@
 		type Cobertura,
 		type CorpusResumen,
 		type IndexarEstado,
+		type Personas,
 		type ResultadoBusqueda
 	} from '$lib/api';
 
@@ -12,19 +13,42 @@
 	let personaConsulta = $state('');
 	let subiendo = $state(false);
 	let arrastrandoArchivo = $state(false);
-	let fotosSubidas = $state<string[]>([]);
 	let errorSubida = $state<string | null>(null);
+
+	// Las personas que ya existen en data/. La lista es la fuente de verdad
+	// de las fotos que se muestran: antes solo se veian las subidas en ESTA
+	// sesion, asi que elegir a alguien que ya tenia fotos se veia vacio.
+	let personas = $state<Personas | null>(null);
+	// El desplegable no puede ser solo lectura: aqui tambien se da de alta a
+	// alguien nuevo. Esta bandera cambia el <select> por un campo de texto.
+	let personaNueva = $state(false);
+
+	const fotosDePersona = $derived.by(() => {
+		const p = personas?.personas.find((x) => x.persona === personaConsulta.trim());
+		return p?.fotos ?? [];
+	});
+
+	async function refrescarPersonas() {
+		try {
+			personas = await api.personas();
+		} catch {
+			personas = null;
+		}
+	}
 
 	async function subirArchivos(archivos: FileList | File[]) {
 		if (!personaConsulta.trim()) {
-			errorSubida = 'Ponle un nombre a la persona que buscas antes de subir fotos.';
+			errorSubida = 'Elige o escribe a quién buscas antes de subir fotos.';
 			return;
 		}
 		subiendo = true;
 		errorSubida = null;
 		try {
-			const r = await api.subirFotos(personaConsulta.trim(), archivos);
-			fotosSubidas = [...fotosSubidas, ...r.guardadas];
+			await api.subirFotos(personaConsulta.trim(), archivos);
+			// Recargar en vez de acumular en memoria: asi la tira muestra lo
+			// que de verdad hay en disco, recien subido o de antes.
+			await refrescarPersonas();
+			personaNueva = false; // ya existe: vuelve al desplegable
 		} catch (e) {
 			errorSubida = e instanceof Error ? e.message : String(e);
 		} finally {
@@ -80,6 +104,7 @@
 			.then((r) => (corpus = r))
 			.catch(() => (corpus = null));
 		void refrescarHistorial();
+		void refrescarPersonas();
 	});
 
 	const fecha = (iso: string) => {
@@ -202,9 +227,34 @@
 	<h2>1 · Fotos de referencia</h2>
 	<label class="campo">
 		<span>Persona que buscas</span>
-		<input type="text" bind:value={personaConsulta} />
+		{#if personaNueva || !personas?.personas.length}
+			<input type="text" bind:value={personaConsulta} />
+		{:else}
+			<select
+				bind:value={personaConsulta}
+				onchange={(e) => {
+					if ((e.currentTarget as HTMLSelectElement).value === '__nueva__') {
+						personaConsulta = '';
+						personaNueva = true;
+					}
+				}}
+			>
+				<option value="">— elige —</option>
+				{#each personas.personas as p (p.persona)}
+					<option value={p.persona}>{p.persona} · {p.n_fotos} foto(s)</option>
+				{/each}
+				<option value="__nueva__">+ nueva persona…</option>
+			</select>
+		{/if}
 	</label>
 	<p class="tenue">
+		{#if personaNueva && personas?.personas.length}
+			Escribe el nombre y sube sus fotos.
+			<button type="button" class="enlace" onclick={() => (personaNueva = false)}>
+				volver a la lista
+			</button>
+			·
+		{/if}
 		Se guardan en <code>data/{personaConsulta.trim() || '…'}/</code> — el mismo lugar que usa
 		Labs.
 	</p>
@@ -235,11 +285,12 @@
 		<p class="tenue error-texto">{errorSubida}</p>
 	{/if}
 
-	{#if fotosSubidas.length}
+	{#if fotosDePersona.length}
 		<div class="tira">
-			{#each fotosSubidas as ruta (ruta)}
+			{#each fotosDePersona as f (f.ruta)}
 				<figure>
-					<img src={api.urlFoto(ruta)} alt={ruta} loading="lazy" />
+					<img src={api.urlFoto(f.ruta)} alt={f.nombre} loading="lazy" />
+					<figcaption>{f.nombre}</figcaption>
 				</figure>
 			{/each}
 		</div>
@@ -463,7 +514,8 @@
 		max-width: 320px;
 	}
 
-	.campo input[type='text'] {
+	.campo input[type='text'],
+	.campo select {
 		font: inherit;
 		font-size: 0.95rem;
 		text-transform: none;
@@ -473,6 +525,13 @@
 		border: 1px solid rgba(255, 255, 255, 0.18);
 		border-radius: 9px;
 		padding: 0.5rem 0.7rem;
+	}
+
+	/* El popup del <select> lo pinta el SO sobre superficie opaca: un fondo
+	   translucido ahi se ve blanco. Mismo azul solido que el resto. */
+	.campo select option {
+		background: rgb(10, 25, 70);
+		color: rgba(255, 255, 255, 0.92);
 	}
 
 	.dropzone {
