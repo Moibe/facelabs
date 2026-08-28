@@ -9,7 +9,7 @@
 		type ResultadoBusqueda
 	} from '$lib/api';
 
-	// ---------------------------------------------- 1. subir fotos (dropbox)
+	// ---------------------------------------------- 2. subir fotos (dropbox)
 	let personaConsulta = $state('');
 	let subiendo = $state(false);
 	let arrastrandoArchivo = $state(false);
@@ -68,7 +68,7 @@
 		(e.currentTarget as HTMLInputElement).value = '';
 	}
 
-	// -------------------------------------------- 2. corpus: resumen/indexar
+	// -------------------------------------------- 1. corpus: resumen/indexar
 	let corpus = $state<CorpusResumen | null>(null);
 	let limiteCarpetas = $state(10);
 	let limitePorCarpeta = $state(5);
@@ -224,85 +224,11 @@
 </header>
 
 <section class="tarjeta">
-	<h2>1 · Fotos de referencia</h2>
-	<label class="campo">
-		<span>Persona que buscas</span>
-		{#if personaNueva || !personas?.personas.length}
-			<input type="text" bind:value={personaConsulta} />
-		{:else}
-			<select
-				bind:value={personaConsulta}
-				onchange={(e) => {
-					if ((e.currentTarget as HTMLSelectElement).value === '__nueva__') {
-						personaConsulta = '';
-						personaNueva = true;
-					}
-				}}
-			>
-				<option value="">— elige —</option>
-				{#each personas.personas as p (p.persona)}
-					<option value={p.persona}>{p.persona} · {p.n_fotos} foto(s)</option>
-				{/each}
-				<option value="__nueva__">+ nueva persona…</option>
-			</select>
-		{/if}
-	</label>
+	<h2>1 · Corpus externo</h2>
 	<p class="tenue">
-		{#if personaNueva && personas?.personas.length}
-			Escribe el nombre y sube sus fotos.
-			<button type="button" class="enlace" onclick={() => (personaNueva = false)}>
-				volver a la lista
-			</button>
-			·
-		{/if}
-		Se guardan en <code>data/{personaConsulta.trim() || '…'}/</code> — el mismo lugar que usa
-		Labs.
-	</p>
-
-	<!-- svelte-ignore a11y_no_static_element_interactions -->
-	<div
-		class="dropzone"
-		class:activa={arrastrandoArchivo}
-		ondragover={(e) => {
-			e.preventDefault();
-			arrastrandoArchivo = true;
-		}}
-		ondragleave={() => (arrastrandoArchivo = false)}
-		ondrop={onDrop}
-	>
-		{#if subiendo}
-			<p>Subiendo…</p>
-		{:else}
-			<p>Arrastra fotos aquí, o</p>
-			<label class="chip elegir">
-				elegir archivos
-				<input type="file" accept="image/*" multiple onchange={onFileInput} hidden />
-			</label>
-		{/if}
-	</div>
-
-	{#if errorSubida}
-		<p class="tenue error-texto">{errorSubida}</p>
-	{/if}
-
-	{#if fotosDePersona.length}
-		<div class="tira">
-			{#each fotosDePersona as f (f.ruta)}
-				<figure>
-					<img src={api.urlFoto(f.ruta)} alt={f.nombre} loading="lazy" />
-					<figcaption>{f.nombre}</figcaption>
-				</figure>
-			{/each}
-		</div>
-	{/if}
-</section>
-
-<section class="tarjeta">
-	<h2>2 · Corpus externo</h2>
-	<p class="tenue">
-		No depende del paso 1: indexar sólo lee el corpus, no le importa a quién buscas. Conviene
-		arrancarlo primero — tarda horas — y preparar las fotos de referencia mientras corre. El
-		paso 3 sí necesita los dos.
+		Va primero porque es lo lento — puede tardar horas — y porque no depende de nada: indexar
+		sólo lee el corpus, no le importa a quién buscas. Arráncalo y prepara las fotos del paso 2
+		mientras corre.
 	</p>
 	{#if corpus === null}
 		<p class="tenue">Cargando…</p>
@@ -413,6 +339,80 @@
 		{#if errorIndexar}
 			<p class="tenue error-texto">{errorIndexar}</p>
 		{/if}
+	{/if}
+</section>
+
+<section class="tarjeta">
+	<h2>2 · Fotos de referencia</h2>
+	<label class="campo">
+		<span>Persona que buscas</span>
+		{#if personaNueva || !personas?.personas.length}
+			<input type="text" bind:value={personaConsulta} />
+		{:else}
+			<select
+				bind:value={personaConsulta}
+				onchange={(e) => {
+					if ((e.currentTarget as HTMLSelectElement).value === '__nueva__') {
+						personaConsulta = '';
+						personaNueva = true;
+					}
+				}}
+			>
+				<option value="">— elige —</option>
+				{#each personas.personas as p (p.persona)}
+					<option value={p.persona}>{p.persona} · {p.n_fotos} foto(s)</option>
+				{/each}
+				<option value="__nueva__">+ nueva persona…</option>
+			</select>
+		{/if}
+	</label>
+	<p class="tenue">
+		{#if personaNueva && personas?.personas.length}
+			Escribe el nombre y sube sus fotos.
+			<button type="button" class="enlace" onclick={() => (personaNueva = false)}>
+				volver a la lista
+			</button>
+			·
+		{/if}
+		Se guardan en <code>data/{personaConsulta.trim() || '…'}/</code> — el mismo lugar que usa
+		Labs.
+	</p>
+
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div
+		class="dropzone"
+		class:activa={arrastrandoArchivo}
+		ondragover={(e) => {
+			e.preventDefault();
+			arrastrandoArchivo = true;
+		}}
+		ondragleave={() => (arrastrandoArchivo = false)}
+		ondrop={onDrop}
+	>
+		{#if subiendo}
+			<p>Subiendo…</p>
+		{:else}
+			<p>Arrastra fotos aquí, o</p>
+			<label class="chip elegir">
+				elegir archivos
+				<input type="file" accept="image/*" multiple onchange={onFileInput} hidden />
+			</label>
+		{/if}
+	</div>
+
+	{#if errorSubida}
+		<p class="tenue error-texto">{errorSubida}</p>
+	{/if}
+
+	{#if fotosDePersona.length}
+		<div class="tira">
+			{#each fotosDePersona as f (f.ruta)}
+				<figure>
+					<img src={api.urlFoto(f.ruta)} alt={f.nombre} loading="lazy" />
+					<figcaption>{f.nombre}</figcaption>
+				</figure>
+			{/each}
+		</div>
 	{/if}
 </section>
 
