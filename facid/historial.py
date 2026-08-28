@@ -17,6 +17,7 @@ correr algo.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -68,7 +69,24 @@ CREATE TABLE IF NOT EXISTS coincidencias (
     orden        INTEGER
 );
 
+-- El consolidado por persona no se puede recalcular al releer una busqueda:
+-- de las coincidencias solo se guarda el top_n de cada consulta, y el
+-- consolidado se agrega sobre TODAS las comparaciones. Asi que se guarda.
+CREATE TABLE IF NOT EXISTS consolidado (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    busqueda_id     INTEGER NOT NULL,
+    persona         TEXT    NOT NULL,
+    mejor           REAL,
+    promedio        REAL,
+    n_consultas     INTEGER,
+    n_fotos_corpus  INTEGER,
+    mejor_ruta      TEXT,
+    por_consulta    TEXT,      -- JSON {consulta: score}
+    orden           INTEGER
+);
+
 CREATE INDEX IF NOT EXISTS ix_coinc_busqueda ON coincidencias (busqueda_id);
+CREATE INDEX IF NOT EXISTS ix_consol_busqueda ON consolidado (busqueda_id);
 CREATE INDEX IF NOT EXISTS ix_busquedas_fecha ON busquedas (creada_en DESC);
 """
 
@@ -151,6 +169,20 @@ class HistorialStore:
                        archivo, ruta, score, orden) VALUES (?,?,?,?,?,?,?,?)""",
                 filas,
             )
+
+        cons = [
+            (bid, c["persona"], c.get("mejor"), c.get("promedio"),
+             c.get("n_consultas"), c.get("n_fotos_corpus"), c.get("mejor_ruta"),
+             json.dumps(c.get("por_consulta") or {}), i)
+            for i, c in enumerate(resultado.get("consolidado", []))
+        ]
+        if cons:
+            self.conn.executemany(
+                """INSERT INTO consolidado (busqueda_id, persona, mejor, promedio,
+                       n_consultas, n_fotos_corpus, mejor_ruta, por_consulta, orden)
+                   VALUES (?,?,?,?,?,?,?,?,?)""",
+                cons,
+            )
         self.conn.commit()
         return bid
 
@@ -178,16 +210,31 @@ class HistorialStore:
                 "persona": r["persona"], "archivo": r["archivo"],
                 "ruta": r["ruta"], "score": r["score"],
             })
+        consolidado = []
+        for r in self.conn.execute(
+                "SELECT * FROM consolidado WHERE busqueda_id=? ORDER BY orden", (busqueda_id,)):
+            try:
+                pc = json.loads(r["por_consulta"] or "{}")
+            except (TypeError, ValueError):
+                pc = {}
+            consolidado.append({
+                "persona": r["persona"], "mejor": r["mejor"], "promedio": r["promedio"],
+                "n_consultas": r["n_consultas"], "n_fotos_corpus": r["n_fotos_corpus"],
+                "mejor_ruta": r["mejor_ruta"], "por_consulta": pc,
+            })
+
         return {
             **dict(cab),
             "n_indexado": cab["n_indexado"],
             "n_carpetas_indexadas": cab["n_carpetas_indexadas"],
             "resultados": list(por_consulta.values()),
+            "consolidado": consolidado,
         }
 
     def borrar_busqueda(self, busqueda_id: int) -> bool:
         cur = self.conn.execute("DELETE FROM busquedas WHERE id=?", (busqueda_id,))
         self.conn.execute("DELETE FROM coincidencias WHERE busqueda_id=?", (busqueda_id,))
+        self.conn.execute("DELETE FROM consolidado WHERE busqueda_id=?", (busqueda_id,))
         self.conn.commit()
         return cur.rowcount > 0
 

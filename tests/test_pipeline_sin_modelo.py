@@ -723,6 +723,86 @@ def test_descubrir_corpus():
         check(True, "corpus inexistente -> FileNotFoundError")
 
 
+# ============================================ 7d. buscar — consolidado 1:N
+def test_buscar_consolidado():
+    print("\n[7d] buscar — listas por foto y consolidado por persona")
+    from facid.busqueda import buscar
+
+    raiz = TMP / "buscar_1n"
+    corpus = raiz / "corpus"
+    consultas = raiz / "consultas"
+
+    # Embeddings elegidos para que los scores sean predecibles: la consulta A
+    # es identica a cand_a/1, y B identica a cand_a/2. Asi el consolidado de
+    # cand_a debe salir con mejor=1.0 en las dos, y el de cand_b bajo.
+    # OJO con los ids: escribir_img produce bytes IDENTICOS para el mismo id, y
+    # el sha256 es la llave de cache compartida por todo el archivo de pruebas.
+    # Reusar un id de otro test hace que este lea embeddings ajenos y lo rompa
+    # a distancia. 201-203 estan reservados para esta prueba.
+    e_a1, e_a2, e_b = emb_persona(101), emb_persona(102), emb_persona(103)
+    faces = {
+        201: [FakeFace([0, 0, 50, 50], 0.9, e_a1)],
+        202: [FakeFace([0, 0, 50, 50], 0.9, e_a2)],
+        203: [FakeFace([0, 0, 50, 50], 0.9, e_b)],
+    }
+    rt = FakeRuntime(FakeApp(faces))
+
+    # corpus: cand_a con 2 fotos, cand_b con 1
+    # .png y no .jpg: escribir_img codifica el id en un pixel, y JPEG es con
+    # perdida — el id no sobrevive la compresion y el fixture quedaria vacio.
+    escribir_img(corpus / "cand_a" / "1.png", 201)
+    escribir_img(corpus / "cand_a" / "2.png", 202)
+    escribir_img(corpus / "cand_b" / "1.png", 203)
+    # Indexar el corpus (es lo que buscar() espera encontrar en cache).
+    from facid.busqueda import indexar_corpus
+    resumen = indexar_corpus(corpus, rt, face_policy=FacePolicy.STRICT)
+    check(resumen["indexadas_ok"] == 3, f"fixture: 3 fotos indexadas (dio {resumen['indexadas_ok']})")
+
+    qa = escribir_img(consultas / "qa.png", 201)   # identica a cand_a/1
+    qb = escribir_img(consultas / "qb.png", 202)   # identica a cand_a/2
+    r = buscar([qa, qb], corpus, rt, face_policy=FacePolicy.STRICT, top_n=10)
+
+    check(len(r["resultados"]) == 2, "sigue devolviendo una lista por foto de consulta")
+    check(r["resultados"][0]["coincidencias"][0]["score"] > 0.99,
+          "cada lista por foto rankea bien (la identica queda primera)")
+
+    cons = {c["persona"]: c for c in r["consolidado"]}
+    check(set(cons) == {"cand_a", "cand_b"}, "el consolidado tiene una fila por PERSONA")
+    check(cons["cand_a"]["n_fotos_corpus"] == 2 and cons["cand_b"]["n_fotos_corpus"] == 1,
+          "cuenta cuantas fotos del corpus son de cada persona")
+    check(cons["cand_a"]["n_consultas"] == 2, "registra contra cuantas consultas se comparo")
+
+    # qa es identica a cand_a/1 y qb a cand_a/2, asi que el mejor score de
+    # cand_a contra CADA consulta es ~1.0 -> promedio ~1.0.
+    check(cons["cand_a"]["mejor"] > 0.99, f"mejor de cand_a ~1.0 (dio {cons['cand_a']['mejor']:.4f})")
+    check(cons["cand_a"]["promedio"] > 0.99,
+          f"promedio de cand_a ~1.0 (dio {cons['cand_a']['promedio']:.4f})")
+    check(cons["cand_a"]["promedio"] > cons["cand_b"]["promedio"],
+          "cand_a queda por encima de cand_b")
+    check(r["consolidado"][0]["persona"] == "cand_a", "y sale primero en el orden")
+
+    # El promedio debe ser exactamente la media de los por_consulta.
+    pc = cons["cand_a"]["por_consulta"]
+    check(set(pc) == {"qa.png", "qb.png"}, "por_consulta trae una entrada por foto de referencia")
+    check(casi(cons["cand_a"]["promedio"], sum(pc.values()) / len(pc), 1e-6),
+          "promedio == media de los mejores por consulta (verificable a mano)")
+    check(casi(cons["cand_a"]["mejor"], max(pc.values()), 1e-6),
+          "mejor == maximo de los mejores por consulta")
+
+    # Orden por PROMEDIO, no por maximo: un candidato con un solo acierto alto
+    # no debe superar a uno parejo. Se comprueba con la regla, no con el fixture.
+    proms = [c["promedio"] for c in r["consolidado"]]
+    check(proms == sorted(proms, reverse=True), "el consolidado viene ordenado por promedio")
+
+    # Una sola foto de consulta: el consolidado sigue existiendo y ahi
+    # promedio == mejor (no hay nada que promediar).
+    r1 = buscar([qa], corpus, rt, face_policy=FacePolicy.STRICT, top_n=10)
+    c1 = {c["persona"]: c for c in r1["consolidado"]}["cand_a"]
+    check(c1["n_consultas"] == 1, "con una sola consulta, n_consultas == 1")
+    check(casi(c1["promedio"], c1["mejor"], 1e-9),
+          "con una sola foto, promedio y mejor coinciden: no aporta consolidacion")
+
+
 # ==================================================== 7c. historial
 def test_historial():
     print("\n[7c] historial — corridas, busquedas y cobertura")
@@ -758,6 +838,14 @@ def test_historial():
             ]},
             {"consulta": "b.jpg", "error": "NO_FACE", "coincidencias": []},
         ],
+        "consolidado": [
+            {"persona": "p1", "mejor": 0.9, "promedio": 0.85, "n_consultas": 2,
+             "n_fotos_corpus": 7, "mejor_ruta": "p1/1.jpg",
+             "por_consulta": {"a.jpg": 0.9, "b.jpg": 0.8}},
+            {"persona": "p2", "mejor": 0.1, "promedio": 0.05, "n_consultas": 2,
+             "n_fotos_corpus": 3, "mejor_ruta": "p2/2.jpg",
+             "por_consulta": {"a.jpg": 0.1, "b.jpg": 0.0}},
+        ],
     }
     bid = h.guardar_busqueda("laura", "C:/corpus_falso", 0.181, resultado)
     check(len(h.busquedas()) == 1, "la busqueda queda en el historial")
@@ -776,6 +864,15 @@ def test_historial():
           "conserva el error de la consulta que no se pudo procesar")
     check(any(c["score"] < 0.181 for c in por_consulta["a.jpg"]["coincidencias"]),
           "guarda TODO el ranking, no solo lo que pasaba el umbral")
+
+    cons = leida["consolidado"]
+    check(len(cons) == 2, "el consolidado tambien se persiste")
+    check(cons[0]["persona"] == "p1", "conserva el orden del consolidado")
+    check(cons[0]["promedio"] == 0.85 and cons[0]["mejor"] == 0.9,
+          "conserva promedio y mejor")
+    check(cons[0]["por_consulta"] == {"a.jpg": 0.9, "b.jpg": 0.8},
+          "conserva el desglose por foto de referencia (JSON de ida y vuelta)")
+    check(cons[0]["n_fotos_corpus"] == 7, "conserva cuantas fotos del corpus son de esa persona")
 
     check(h.busqueda(99999) is None, "un id inexistente devuelve None, no truena")
     check(h.borrar_busqueda(bid) is True, "se puede borrar una busqueda")
@@ -874,6 +971,7 @@ def main() -> int:
     test_dependencia()
     test_init_manifest()
     test_descubrir_corpus()
+    test_buscar_consolidado()
     test_historial()
     test_harness_end_to_end()
     test_provider_en_reporte()

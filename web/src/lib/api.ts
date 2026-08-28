@@ -302,10 +302,25 @@ export type IndexarEstado = {
 
 export type Coincidencia = { persona: string; archivo: string; score: number; ruta: string };
 
+/** Una fila del ranking consolidado: una PERSONA del corpus, no una foto. */
+export type Consolidado = {
+	persona: string;
+	/** Mejor score contra cualquiera de las fotos de referencia. */
+	mejor: number;
+	/** Promedio de los mejores por foto de referencia — el criterio de orden. */
+	promedio: number;
+	n_consultas: number;
+	n_fotos_corpus: number;
+	mejor_ruta: string;
+	/** {nombre de la foto de referencia: mejor score contra esta persona} */
+	por_consulta: Record<string, number>;
+};
+
 export type ResultadoBusqueda = {
 	n_indexado: number;
 	n_carpetas_indexadas: number;
 	resultados: { consulta: string; error: string | null; coincidencias: Coincidencia[] }[];
+	consolidado?: Consolidado[];
 	/** Presente en una búsqueda recién hecha; también al releerla del historial. */
 	busqueda_id?: number;
 	persona?: string;

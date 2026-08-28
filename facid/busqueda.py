@@ -25,6 +25,7 @@ Separado en dos pasos a proposito:
 from __future__ import annotations
 
 import threading
+from collections import Counter
 from pathlib import Path
 from typing import Any, Callable
 
@@ -193,6 +194,10 @@ def buscar(query_paths: list[str | Path], corpus_dir: str | Path, runtime, *,
                     indexado.append((persona, f.name, store.cargar_embedding(fila)))
 
         resultados = []
+        # persona del corpus -> {nombre de la foto de consulta: mejor score}
+        por_persona: dict[str, dict[str, float]] = {}
+        # persona del corpus -> (mejor score visto, ruta de esa foto)
+        mejor_foto: dict[str, tuple[float, str]] = {}
         for qp in query_paths:
             qpath = Path(qp)
             sha = store.sha_de(qpath)
@@ -210,21 +215,57 @@ def buscar(query_paths: list[str | Path], corpus_dir: str | Path, runtime, *,
                 store.guardar(r, runtime, face_policy)
                 emb = r["embedding"]
 
-            puntuadas = sorted(
-                (
-                    {"persona": persona, "archivo": nombre, "score": compare(emb, emb_c)}
-                    for persona, nombre, emb_c in indexado
-                ),
-                key=lambda x: -x["score"],
-            )
+            puntuadas = []
+            # Mejor score de ESTA foto de consulta contra cada persona del
+            # corpus. Se agrega ANTES de recortar a top_n: si se consolidara
+            # sobre los top_n ya recortados, una persona quedaria fuera del
+            # consolidado solo por no haber entrado en la lista corta de una
+            # de las consultas, que es justo lo contrario de lo que se busca.
+            mejor_de_esta: dict[str, float] = {}
+            for persona, nombre, emb_c in indexado:
+                s = compare(emb, emb_c)
+                puntuadas.append({"persona": persona, "archivo": nombre, "score": s})
+                if s > mejor_de_esta.get(persona, float("-inf")):
+                    mejor_de_esta[persona] = s
+                if s > mejor_foto.get(persona, (float("-inf"), ""))[0]:
+                    mejor_foto[persona] = (s, f"{persona}/{nombre}")
+
+            puntuadas.sort(key=lambda x: -x["score"])
             resultados.append({
                 "consulta": qpath.name, "error": None, "coincidencias": puntuadas[:top_n],
             })
+            for persona, s in mejor_de_esta.items():
+                por_persona.setdefault(persona, {})[qpath.name] = s
     finally:
         store.close()
+
+    # ------------------------------------------------------------ consolidado
+    # Una sola lista por PERSONA del corpus, no por foto: la pregunta real es
+    # "¿aparece esta persona?", y las listas por foto ya se llenaban con varias
+    # fotos del mismo candidato.
+    #
+    # Se ordena por PROMEDIO y no por mejor score a proposito: un candidato con
+    # 0.30 / 0.29 / 0.31 contra tres referencias es mucho mas creible que uno
+    # con 0.35 / 0.05 / 0.02, y ordenar por el maximo pondria al segundo
+    # primero. El maximo se reporta igual, para no esconderlo.
+    n_fotos = Counter(persona for persona, _, _ in indexado)
+    consolidado = []
+    for persona, scores in por_persona.items():
+        vals = list(scores.values())
+        consolidado.append({
+            "persona": persona,
+            "mejor": max(vals),
+            "promedio": sum(vals) / len(vals),
+            "n_consultas": len(vals),
+            "n_fotos_corpus": n_fotos[persona],
+            "mejor_ruta": mejor_foto[persona][1],
+            "por_consulta": scores,
+        })
+    consolidado.sort(key=lambda x: -x["promedio"])
 
     return {
         "n_indexado": len(indexado),
         "n_carpetas_indexadas": len({p for p, _, _ in indexado}),
         "resultados": resultados,
+        "consolidado": consolidado[:top_n],
     }

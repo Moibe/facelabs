@@ -508,6 +508,60 @@
 				· <strong>Del historial</strong>, hecha el {fecha(resultado.creada_en)}.
 			{/if}
 		</p>
+
+		{#if resultado.consolidado?.length}
+			<div class="consulta">
+				<h3>Consolidado por persona</h3>
+				<p class="tenue">
+					Una fila por persona del corpus, juntando tus {resultado.resultados.length} foto(s) de
+					referencia. Ordenado por <strong>promedio</strong>, no por el mejor score: alguien que
+					coincide parejo con todas tus fotos es mucho más creíble que alguien con un solo acierto
+					alto y el resto en cero.
+				</p>
+				<div class="tabla-scroll">
+					<table>
+						<thead>
+							<tr>
+								<th></th>
+								<th>Persona</th>
+								<th>Promedio</th>
+								<th>Mejor</th>
+								<th>Sobre el umbral</th>
+								<th>Fotos suyas</th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each resultado.consolidado as c (c.persona)}
+								{@const sobre = Object.values(c.por_consulta).filter((s) => s >= umbral).length}
+								<tr class:alerta-fila={c.promedio >= umbral}>
+									<td>
+										<img
+											class="mini"
+											src={api.urlFotoCorpus(c.mejor_ruta)}
+											alt={c.persona}
+											loading="lazy"
+										/>
+									</td>
+									<td><code>{c.persona}</code></td>
+									<td class="num"><strong>{pct(c.promedio)}</strong></td>
+									<td class="num tenue">{pct(c.mejor)}</td>
+									<td class="num" class:bien={sobre === c.n_consultas && sobre > 0}>
+										{sobre}/{c.n_consultas}
+									</td>
+									<td class="num tenue">{c.n_fotos_corpus}</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				</div>
+				<p class="tenue">
+					"Sobre el umbral" cuenta en cuántas de tus fotos de referencia esa persona pasa el corte
+					actual ({umbral}). {resultado.resultados.length}/{resultado.resultados.length} es la señal
+					más fuerte que da este set.
+				</p>
+			</div>
+		{/if}
+
 		{#each resultado.resultados as r (r.consulta)}
 			<div class="consulta">
 				<h3>{r.consulta}</h3>
@@ -837,5 +891,26 @@
 
 	.mal {
 		color: var(--mal);
+	}
+
+	.num {
+		font-family: ui-monospace, Consolas, monospace;
+		text-align: right;
+	}
+
+	.mini {
+		width: 40px;
+		height: 40px;
+		object-fit: cover;
+		border-radius: 7px;
+		border: 1px solid rgba(255, 255, 255, 0.14);
+		display: block;
+	}
+
+	/* La fila que pasa el umbral se marca con borde Y con el conteo "n/n" del
+	   texto, nunca solo con color. */
+	.alerta-fila {
+		background: rgba(220, 38, 38, 0.12);
+		box-shadow: inset 3px 0 0 var(--mal);
 	}
 </style>
