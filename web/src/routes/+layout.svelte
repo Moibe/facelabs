@@ -10,9 +10,10 @@
 	let collapsed = $state(false);
 
 	// "Run" es su propia sección, sin relación con las páginas de Labs (El set /
-	// Entorno / Pares / Panorama) — el sidebar de esas 4 no aplica ahí, así que
-	// no se muestra en vez de mostrar links que no llevan a nada relevante.
-	const enRun = $derived(page.url.pathname.startsWith('/run'));
+	// Entorno / Pares / Panorama): el sidebar de esas 4 no aplica ahí, así que no
+	// se muestra en vez de ofrecer links que no llevan a nada relevante.
+	// /corpus es el explorador que abren las cifras de Run, así que va con ella.
+	const enRun = $derived(/^\/(run|corpus)/.test(page.url.pathname));
 
 	// Una sola carga al arrancar; las páginas leen del estado compartido.
 	$effect(() => {

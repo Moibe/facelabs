@@ -438,20 +438,7 @@ def test_historial_api():
             "n_faces_detected": 0, "all_det_scores": [],
         }, RtFalso(), "strict")
 
-    r = cli.get("/api/corpus/fallos")
-    check(r.status_code == 200, f"fallos del corpus responde 200 (dio {r.status_code})")
-    rutas = [f["ruta"] for f in r.json()["fallos"]]
-    check("candidato_a/01.jpg" in rutas, f"lista el fallo del corpus (dio {rutas})")
-    check(all("yo/" not in x for x in rutas),
-          "NO incluye fallos de data/: esta lista es del corpus")
-    check(all(not x.startswith(("C:", "/")) for x in rutas),
-          "las rutas vienen relativas al corpus, listas para /api/corpus/foto")
-    r2 = cli.get("/api/corpus/foto", params={"ruta": rutas[0]})
-    check(r2.status_code == 200, "esa ruta SI se puede pedir a /api/corpus/foto")
-    check(len(cli.get("/api/corpus/fallos", params={"limite": 1}).json()["fallos"]) <= 1,
-          "respeta el limite")
-
-    # --- exitos del corpus: ver las que SI dieron rostro ---
+    # --- /api/corpus/fotos: la consulta unificada, con filtros ---
     import numpy as _np
     with EmbeddingStore() as st:
         st.guardar({
@@ -463,16 +450,66 @@ def test_historial_api():
             "exif_orientation_applied": False, "margen_agregado": 0.5,
         }, RtFalso(), "strict")
 
-    r = cli.get("/api/corpus/exitos")
-    check(r.status_code == 200, f"exitos del corpus responde 200 (dio {r.status_code})")
-    ex = r.json()["exitos"]
-    mio = [e for e in ex if e["ruta"] == "candidato_b/01.jpg"]
-    check(len(mio) == 1, f"lista el exito del corpus (rutas: {[e['ruta'] for e in ex]})")
-    check(mio[0]["det_score"] == 0.87, "trae el det_score")
-    check(mio[0]["margen_agregado"] == 0.5,
+    r = cli.get("/api/corpus/fotos")
+    check(r.status_code == 200, f"fotos del corpus responde 200 (dio {r.status_code})")
+    j = r.json()
+    rutas = [f["ruta"] for f in j["fotos"]]
+    check(j["total"] == len(rutas), f"el total cuadra con lo devuelto (dio {j['total']}/{len(rutas)})")
+    check("candidato_a/01.jpg" in rutas and "candidato_b/01.jpg" in rutas,
+          f"trae exitos Y fallos del corpus (dio {rutas})")
+    check(all("yo/" not in x for x in rutas),
+          "NO incluye nada de data/: esta lista es del corpus")
+    check(all(not x.startswith(("C:", "/")) for x in rutas),
+          "las rutas vienen relativas al corpus, listas para /api/corpus/foto")
+    check(cli.get("/api/corpus/foto", params={"ruta": rutas[0]}).status_code == 200,
+          "esa ruta SI se puede pedir a /api/corpus/foto")
+
+    por_estado = {f["ruta"]: f["estado"] for f in j["fotos"]}
+    check(por_estado["candidato_a/01.jpg"] == "sin_rostro", "marca el fallo como sin_rostro")
+    check(por_estado["candidato_b/01.jpg"] == "con_rostro", "marca el exito como con_rostro")
+
+    solo_ok = cli.get("/api/corpus/fotos", params={"estado": "con_rostro"}).json()
+    check([f["ruta"] for f in solo_ok["fotos"]] == ["candidato_b/01.jpg"],
+          "filtra por estado=con_rostro")
+    check(solo_ok["fotos"][0]["det_score"] == 0.87, "trae el det_score")
+    check(solo_ok["fotos"][0]["margen_agregado"] == 0.5,
           "trae el margen que hizo falta (asi se ve cual fue 'rescatada')")
-    check(all(not x["ruta"].startswith(("C:", "/")) for x in ex),
-          "las rutas vienen relativas al corpus")
+
+    solo_mal = cli.get("/api/corpus/fotos", params={"estado": "sin_rostro"}).json()
+    check([f["ruta"] for f in solo_mal["fotos"]] == ["candidato_a/01.jpg"],
+          "filtra por estado=sin_rostro")
+    check(solo_mal["fotos"][0]["error"] == "NO_FACE", "conserva el codigo de error")
+
+    p_a = cli.get("/api/corpus/fotos", params={"persona": "candidato_a"}).json()
+    check(all(f["ruta"].startswith("candidato_a/") for f in p_a["fotos"]),
+          "filtra por persona")
+
+    margen = cli.get("/api/corpus/fotos", params={"solo_con_margen": "true"}).json()
+    check([f["ruta"] for f in margen["fotos"]] == ["candidato_b/01.jpg"],
+          "filtra las que necesitaron margen")
+
+    # Paginacion: el total NO cambia al pedir una pagina chica.
+    pag = cli.get("/api/corpus/fotos", params={"limite": 1}).json()
+    check(len(pag["fotos"]) == 1, "respeta el limite")
+    check(pag["total"] == j["total"], "el total es el del filtro, no el de la pagina")
+    pag2 = cli.get("/api/corpus/fotos", params={"limite": 1, "offset": 1}).json()
+    check(pag2["fotos"][0]["ruta"] != pag["fotos"][0]["ruta"],
+          "offset avanza a la siguiente foto")
+
+    check(cli.get("/api/corpus/fotos", params={"estado": "inventado"}).status_code == 422,
+          "un estado invalido se rechaza")
+    check(cli.get("/api/corpus/fotos", params={"persona": "../fuera"}).status_code == 400,
+          "una persona con '..' se rechaza")
+
+    # --- desglose por carpeta, para el filtro del explorador ---
+    r = cli.get("/api/corpus/personas")
+    check(r.status_code == 200, "personas del corpus responde 200")
+    pers = {p["persona"]: p for p in r.json()["personas"]}
+    check(set(pers) == {"candidato_a", "candidato_b"},
+          f"lista las carpetas con fotos procesadas (dio {sorted(pers)})")
+    check(pers["candidato_b"]["con_rostro"] == 1 and pers["candidato_b"]["sin_rostro"] == 0,
+          "cuenta con/sin rostro por carpeta")
+    check(pers["candidato_a"]["total"] == 1, "trae el total por carpeta")
 
     r = cli.get("/api/busquedas")
     check(r.status_code == 200 and "busquedas" in r.json(), "lista de busquedas responde 200")

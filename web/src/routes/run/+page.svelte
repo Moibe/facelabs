@@ -4,8 +4,7 @@
 		type BusquedaGuardada,
 		type Cobertura,
 		type CorpusResumen,
-		type ExitoCorpus,
-		type FalloCorpus,
+		type FotoCorpus,
 		type IndexarEstado,
 		type Personas,
 		type ResultadoBusqueda
@@ -95,20 +94,18 @@
 	// que falla son recortes malos, ni cuáles caras hubo que rescatar con
 	// margen. Solo una tira abierta a la vez — dos listas de 60 miniaturas
 	// juntas empujarian los controles fuera de la pantalla.
-	let tira = $state<'fallos' | 'exitos' | null>(null);
-	let fallos = $state<FalloCorpus[] | null>(null);
-	let exitos = $state<ExitoCorpus[] | null>(null);
-	let cargandoTira = $state<'fallos' | 'exitos' | null>(null);
+	let tira = $state<'sin_rostro' | 'con_rostro' | null>(null);
+	let fotosTira = $state<FotoCorpus[]>([]);
+	let cargandoTira = $state<'sin_rostro' | 'con_rostro' | null>(null);
 
-	async function verTira(cual: 'fallos' | 'exitos') {
+	async function verTira(cual: 'sin_rostro' | 'con_rostro') {
 		if (tira === cual) {
 			tira = null; // segundo clic: cerrar
 			return;
 		}
 		cargandoTira = cual;
 		try {
-			if (cual === 'fallos') fallos = (await api.fallosCorpus(60)).fallos;
-			else exitos = (await api.exitosCorpus(60)).exitos;
+			fotosTira = (await api.fotosCorpus({ estado: cual, limite: 60 })).fotos;
 			tira = cual;
 		} catch (e) {
 			errorIndexar = e instanceof Error ? e.message : String(e);
@@ -308,8 +305,8 @@
 				<button
 					type="button"
 					class="cifra cifra-clic"
-					class:abierta={tira === 'exitos'}
-					onclick={() => verTira('exitos')}
+					class:abierta={tira === 'con_rostro'}
+					onclick={() => verTira('con_rostro')}
 					disabled={!!cargandoTira || !cobertura.con_rostro}
 					title={cobertura.con_rostro ? 'Ver cuáles' : 'No hay ninguna'}
 				>
@@ -317,9 +314,9 @@
 					<span class="et">
 						con rostro usable
 						{#if cobertura.con_rostro}
-							· {cargandoTira === 'exitos'
+							· {cargandoTira === 'con_rostro'
 								? 'abriendo…'
-								: tira === 'exitos'
+								: tira === 'con_rostro'
 									? 'ocultar'
 									: 'ver cuáles'}
 						{/if}
@@ -328,8 +325,8 @@
 				<button
 					type="button"
 					class="cifra cifra-clic"
-					class:abierta={tira === 'fallos'}
-					onclick={() => verTira('fallos')}
+					class:abierta={tira === 'sin_rostro'}
+					onclick={() => verTira('sin_rostro')}
 					disabled={!!cargandoTira || !cobertura.sin_rostro}
 					title={cobertura.sin_rostro ? 'Ver cuáles' : 'No hay ninguna'}
 				>
@@ -337,9 +334,9 @@
 					<span class="et">
 						sin rostro detectable
 						{#if cobertura.sin_rostro}
-							· {cargandoTira === 'fallos'
+							· {cargandoTira === 'sin_rostro'
 								? 'abriendo…'
-								: tira === 'fallos'
+								: tira === 'sin_rostro'
 									? 'ocultar'
 									: 'ver cuáles'}
 						{/if}
@@ -347,60 +344,50 @@
 				</button>
 			</div>
 
-			{#if tira === 'exitos' && exitos}
-				{#if !exitos.length}
-					<p class="tenue">Todavía no hay ninguna.</p>
+			{#if tira}
+				{#if !fotosTira.length}
+					<p class="tenue">No hay ninguna registrada.</p>
 				{:else}
-					{@const conMargen = exitos.filter((e) => (e.margen_agregado ?? 0) > 0).length}
+					{@const conMargen = fotosTira.filter((f) => (f.margen_agregado ?? 0) > 0).length}
 					<p class="tenue">
-						Las {exitos.length} más recientes.
-						{#if conMargen}
-							<strong>{conMargen}</strong> de ellas sólo aparecieron tras rellenarles el borde
-							(marcadas): eso quiere decir que el recorte original venía demasiado pegado a la
-							cara.
+						Las {fotosTira.length} más recientes de
+						{(tira === 'con_rostro'
+							? cobertura.con_rostro
+							: cobertura.sin_rostro
+						).toLocaleString()}.
+						{#if tira === 'con_rostro' && conMargen}
+							<strong>{conMargen}</strong> sólo aparecieron tras rellenarles el borde (marcadas):
+							el recorte original venía demasiado pegado a la cara.
+						{:else if tira === 'sin_rostro'}
+							Sirven para juzgar si lo que queda son recortes demasiado pegados o fotos que de
+							verdad no traen cara.
 						{/if}
+						<a class="enlace" href="/corpus?estado={tira}">verlas todas con filtros →</a>
 					</p>
 					<div class="tira">
-						{#each exitos as e (e.ruta)}
-							<figure>
-								<img src={api.urlFotoCorpus(e.ruta)} alt={e.ruta} loading="lazy" />
-								<figcaption>
-									<span class="bien">det {e.det_score?.toFixed(2) ?? '—'}</span>
-									{#if (e.margen_agregado ?? 0) > 0}
-										<span class="rescatada"
-											>· +{Math.round((e.margen_agregado ?? 0) * 100)}% margen</span
-										>
-									{/if}
-									<br />{e.ruta.split('/')[0]}
-								</figcaption>
-							</figure>
-						{/each}
-					</div>
-				{/if}
-			{/if}
-
-			{#if tira === 'fallos' && fallos}
-				{#if !fallos.length}
-					<p class="tenue">No quedó ninguna registrada.</p>
-				{:else}
-					<p class="tenue">
-						Las {fallos.length} más recientes. Sirven para juzgar si lo que queda son recortes
-						demasiado pegados a la cara o fotos que de verdad no traen una.
-					</p>
-					<div class="tira">
-						{#each fallos as f (f.ruta)}
+						{#each fotosTira as f (f.ruta)}
 							<figure>
 								<img
 									src={api.urlFotoCorpus(f.ruta)}
 									alt={f.ruta}
 									loading="lazy"
-									title={f.error_message ?? f.error}
+									title={f.error ?? undefined}
 								/>
 								<figcaption>
-									<span class="mal"
-										>{f.error}{#if f.n_faces_detected}
-											· {f.n_faces_detected} rostros{/if}</span
-									><br />{f.ruta.split('/')[0]}
+									{#if f.estado === 'con_rostro'}
+										<span class="bien">det {f.det_score?.toFixed(2) ?? '—'}</span>
+										{#if (f.margen_agregado ?? 0) > 0}
+											<span class="rescatada"
+												>· +{Math.round((f.margen_agregado ?? 0) * 100)}%</span
+											>
+										{/if}
+									{:else}
+										<span class="mal"
+											>{f.error}{#if f.n_faces_detected}
+												· {f.n_faces_detected} rostros{/if}</span
+										>
+									{/if}
+									<br />{f.ruta.split('/')[0]}
 								</figcaption>
 							</figure>
 						{/each}

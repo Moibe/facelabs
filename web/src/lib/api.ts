@@ -352,20 +352,32 @@ export type Cobertura = {
 	ultima_corrida: CorridaRegistrada | null;
 };
 
-export type FalloCorpus = {
+/** Una foto del corpus, haya dado rostro o no. Un solo tipo para las dos
+ *  porque las tiras y el explorador las pintan igual, cambiando el detalle. */
+export type FotoCorpus = {
 	/** Relativa al corpus: se sirve con urlFotoCorpus(). */
 	ruta: string;
-	error: string;
-	error_message: string | null;
-	n_faces_detected: number | null;
-};
-
-export type ExitoCorpus = {
-	ruta: string;
+	estado: 'con_rostro' | 'sin_rostro';
 	det_score: number | null;
 	/** >0 = sólo se detectó tras rellenarle ese % de borde. null = se extrajo
 	 *  antes de que existiera el reintento, así que no se sabe. */
 	margen_agregado: number | null;
+	error: string | null;
+	n_faces_detected: number | null;
+};
+
+export type PaginaFotos = {
+	total: number;
+	offset: number;
+	limite: number;
+	fotos: FotoCorpus[];
+};
+
+export type PersonaCorpus = {
+	persona: string;
+	con_rostro: number;
+	sin_rostro: number;
+	total: number;
 };
 
 export type BusquedaGuardada = {
@@ -464,10 +476,25 @@ export const api = {
 	cobertura: () => pedir<Cobertura>('/api/corpus/cobertura'),
 	// Para poder VER las que no dieron rostro: un conteo no dice si son
 	// recortes malos o fotos que de verdad no traen cara.
-	fallosCorpus: (limite = 60) =>
-		pedir<{ limite: number; fallos: FalloCorpus[] }>('/api/corpus/fallos', { limite }),
-	exitosCorpus: (limite = 60) =>
-		pedir<{ limite: number; exitos: ExitoCorpus[] }>('/api/corpus/exitos', { limite }),
+	// Una sola llamada para las tiras cortas y para el explorador: cambian
+	// los filtros, no la forma de la respuesta.
+	fotosCorpus: (opts: {
+		estado?: 'todas' | 'con_rostro' | 'sin_rostro';
+		persona?: string | null;
+		soloConMargen?: boolean;
+		offset?: number;
+		limite?: number;
+	} = {}) => {
+		const params: Record<string, string | number> = {
+			estado: opts.estado ?? 'todas',
+			offset: opts.offset ?? 0,
+			limite: opts.limite ?? 100
+		};
+		if (opts.persona) params.persona = opts.persona;
+		if (opts.soloConMargen) params.solo_con_margen = 'true';
+		return pedir<PaginaFotos>('/api/corpus/fotos', params);
+	},
+	personasCorpus: () => pedir<{ personas: PersonaCorpus[] }>('/api/corpus/personas'),
 	busquedas: (limite = 20) => pedir<{ busquedas: BusquedaGuardada[] }>('/api/busquedas', { limite }),
 	verBusqueda: (id: number) => pedir<ResultadoBusqueda>(`/api/busquedas/${id}`),
 	borrarBusqueda: (id: number) => enviar<{ borrada: number }>(`/api/busquedas/${id}/borrar`, {}),

@@ -265,51 +265,94 @@ class HistorialStore:
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (nombre,)
         ).fetchone() is not None
 
-    def fallos_del_corpus(self, corpus_dir: str | Path,
-                          limite: int = 60) -> list[dict[str, Any]]:
-        """Las fotos del corpus que NO dieron rostro, para poder verlas.
+    # Union de exitos y fallos en una sola forma. Una foto que fallo y DESPUES
+    # se extrajo bien cuenta como con_rostro y nada mas: por eso los fallos
+    # excluyen los sha que ya tienen embedding. Es la misma regla que usa
+    # cobertura(), asi que los totales de aqui cuadran con los de las cifras.
+    _SQL_FOTOS = """
+        SELECT source_path, 'con_rostro' AS estado, det_score, margen_agregado,
+               NULL AS error, n_faces_detected, MAX(created_at) AS created_at
+          FROM embeddings
+         WHERE substr(source_path,1,?)=?
+         GROUP BY image_sha256
+        UNION ALL
+        SELECT source_path, 'sin_rostro' AS estado, NULL, NULL,
+               error, n_faces_detected, MAX(created_at)
+          FROM fallos
+         WHERE substr(source_path,1,?)=?
+           AND image_sha256 NOT IN (SELECT image_sha256 FROM embeddings)
+         GROUP BY image_sha256
+    """
 
-        Un conteo de fallos no dice si el problema son recortes malos o
-        imagenes que de verdad no traen cara; verlas si. Se agrupa por
-        image_sha256 porque la tabla de fallos es un log: la misma foto puede
-        tener varias filas de intentos distintos.
+    def _filtro_fotos(self, corpus_dir: str | Path, persona: str | None,
+                      estado: str, solo_con_margen: bool):
+        """Devuelve (sql_interno, params, sql_extra, params_extra)."""
+        # El filtro por persona se mete en el PREFIJO en vez de un WHERE
+        # aparte: asi la misma comparacion de substr que ya acota al corpus
+        # acota tambien a la carpeta, sin recorrer lo que no interesa.
+        raiz = Path(corpus_dir) / persona if persona else Path(corpus_dir)
+        pref = str(raiz)
+        n = len(pref)
+        params = [n, pref, n, pref]
+
+        extra = ""
+        extra_params: list[Any] = []
+        if estado in ("con_rostro", "sin_rostro"):
+            extra += " AND estado=?"
+            extra_params.append(estado)
+        if solo_con_margen:
+            extra += " AND COALESCE(margen_agregado, 0) > 0"
+        return self._SQL_FOTOS, params, extra, extra_params
+
+    def fotos_del_corpus(self, corpus_dir: str | Path, *, persona: str | None = None,
+                         estado: str = "todas", solo_con_margen: bool = False,
+                         offset: int = 0, limite: int = 100) -> dict[str, Any]:
+        """Una pagina de fotos del corpus, con su total para poder paginar."""
+        if not (self._existe_tabla("embeddings") and self._existe_tabla("fallos")):
+            return {"total": 0, "offset": offset, "limite": limite, "fotos": []}
+
+        base, params, extra, extra_params = self._filtro_fotos(
+            corpus_dir, persona, estado, solo_con_margen)
+
+        total = self.conn.execute(
+            f"SELECT COUNT(*) c FROM ({base}) WHERE 1=1{extra}",
+            (*params, *extra_params)).fetchone()["c"]
+
+        filas = self.conn.execute(
+            f"SELECT * FROM ({base}) WHERE 1=1{extra} "
+            "ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            (*params, *extra_params, limite, offset)).fetchall()
+        return {"total": total, "offset": offset, "limite": limite,
+                "fotos": [dict(r) for r in filas]}
+
+    def personas_del_corpus(self, corpus_dir: str | Path) -> list[dict[str, Any]]:
+        """Cuantas fotos con y sin rostro tiene cada carpeta del corpus.
+
+        Sale de las rutas ya procesadas, no de listar el disco: una carpeta
+        que todavia no se ha tocado no aparece, que es lo correcto para un
+        filtro (elegirla mostraria cero fotos).
         """
-        if not self._existe_tabla("fallos"):
+        if not (self._existe_tabla("embeddings") and self._existe_tabla("fallos")):
             return []
-        prefijo = str(Path(corpus_dir))
-        n = len(prefijo)
-        return [dict(r) for r in self.conn.execute(
-            """SELECT source_path, error, error_message, n_faces_detected,
-                      MAX(created_at) AS created_at
-               FROM fallos
-               WHERE substr(source_path,1,?)=?
-               GROUP BY image_sha256
-               ORDER BY created_at DESC
-               LIMIT ?""",
-            (n, prefijo, limite))]
+        base, params, _, _ = self._filtro_fotos(corpus_dir, None, "todas", False)
 
-    def exitos_del_corpus(self, corpus_dir: str | Path,
-                          limite: int = 60) -> list[dict[str, Any]]:
-        """Las fotos del corpus que SI dieron rostro.
-
-        Trae det_score y margen_agregado porque ahi esta lo interesante: un
-        margen > 0 quiere decir que esa cara solo aparecio despues de
-        rellenarle el borde, o sea que el recorte original venia demasiado
-        pegado. Verlo por foto dice mas del corpus que el conteo total.
-        """
-        if not self._existe_tabla("embeddings"):
-            return []
-        prefijo = str(Path(corpus_dir))
-        n = len(prefijo)
-        return [dict(r) for r in self.conn.execute(
-            """SELECT source_path, det_score, margen_agregado, n_faces_detected,
-                      MAX(created_at) AS created_at
-               FROM embeddings
-               WHERE substr(source_path,1,?)=?
-               GROUP BY image_sha256
-               ORDER BY created_at DESC
-               LIMIT ?""",
-            (n, prefijo, limite))]
+        # El nombre de la carpeta se saca en Python y no en SQL: partir una
+        # ruta de Windows dentro de SQLite pide un anidado de substr/instr
+        # ilegible, y son ~500 carpetas — no vale la pena.
+        crudo = self.conn.execute(f"SELECT source_path, estado FROM ({base})", params)
+        acc: dict[str, dict[str, int]] = {}
+        raiz_p = Path(corpus_dir).resolve()
+        for r in crudo:
+            try:
+                rel = Path(r["source_path"]).resolve().relative_to(raiz_p)
+            except (ValueError, OSError):
+                continue
+            if not rel.parts:
+                continue
+            d = acc.setdefault(rel.parts[0], {"con_rostro": 0, "sin_rostro": 0})
+            d[r["estado"]] += 1
+        return [{"persona": k, **v, "total": v["con_rostro"] + v["sin_rostro"]}
+                for k, v in sorted(acc.items())]
 
     def cobertura(self, corpus_dir: str | Path) -> dict[str, Any]:
         """Cuantas fotos del corpus ya se procesaron alguna vez.

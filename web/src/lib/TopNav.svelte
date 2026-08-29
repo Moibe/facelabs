@@ -8,7 +8,10 @@
 	let tiltX = $state(0);
 	let tiltY = $state(0);
 
-	const enRun = $derived(page.url.pathname.startsWith('/run'));
+	// "Run" es su propia sección: el sidebar de Labs no aplica ahí, y el CSV
+	// de calibración tampoco significa nada. /corpus es el explorador que
+	// abren las cifras de Run, así que va con ella.
+	const enRun = $derived(/^\/(run|corpus)/.test(page.url.pathname));
 
 	function handleMove(e: MouseEvent) {
 		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();

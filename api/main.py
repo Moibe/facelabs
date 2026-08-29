@@ -762,54 +762,57 @@ def corpus_cobertura() -> dict[str, Any]:
         return hist.cobertura(CORPUS_DIR)
 
 
-@app.get("/api/corpus/fallos")
-def corpus_fallos(limite: int = 60) -> dict[str, Any]:
-    """Las fotos del corpus que no dieron rostro, con su ruta ya servible.
+def _a_ruta_de_corpus(source_path: str) -> str | None:
+    """Absoluta -> relativa al corpus, o None si ya no cae dentro.
 
-    La tabla guarda rutas absolutas; se devuelven relativas al corpus para
-    que el front las pida por /api/corpus/foto, que es la unica via
-    sandboxeada para servirlas.
+    El front solo puede pedir fotos por /api/corpus/foto, que es la unica via
+    sandboxeada; una ruta absoluta ahi no le sirve de nada.
     """
-    with HistorialStore() as hist:
-        filas = hist.fallos_del_corpus(CORPUS_DIR, limite)
+    try:
+        return Path(source_path).resolve().relative_to(CORPUS_DIR.resolve()).as_posix()
+    except (ValueError, OSError):
+        return None
 
-    raiz = CORPUS_DIR.resolve()
-    salida = []
-    for f in filas:
-        try:
-            rel = Path(f["source_path"]).resolve().relative_to(raiz).as_posix()
-        except (ValueError, OSError):
-            continue  # ya no cae dentro del corpus: no hay como servirla
-        salida.append({
+
+@app.get("/api/corpus/fotos")
+def corpus_fotos(
+    estado: str = Query("todas", pattern="^(todas|con_rostro|sin_rostro)$"),
+    persona: str | None = None,
+    solo_con_margen: bool = False,
+    offset: int = Query(0, ge=0),
+    limite: int = Query(100, ge=1, le=500),
+) -> dict[str, Any]:
+    """Una pagina de fotos del corpus, filtrable. Alimenta tanto las tiras
+    cortas de las cifras como el explorador completo."""
+    if persona and ("/" in persona or "\\" in persona or persona in ("", ".", "..")):
+        raise HTTPException(400, f"nombre de persona invalido: {persona!r}")
+
+    with HistorialStore() as hist:
+        r = hist.fotos_del_corpus(
+            CORPUS_DIR, persona=persona, estado=estado,
+            solo_con_margen=solo_con_margen, offset=offset, limite=limite)
+
+    fotos = []
+    for f in r["fotos"]:
+        rel = _a_ruta_de_corpus(f["source_path"])
+        if rel is None:
+            continue
+        fotos.append({
             "ruta": rel,
+            "estado": f["estado"],
+            "det_score": f["det_score"],
+            "margen_agregado": f["margen_agregado"],
             "error": f["error"],
-            "error_message": f["error_message"],
             "n_faces_detected": f["n_faces_detected"],
         })
-    return {"limite": limite, "fallos": salida}
+    return {**r, "fotos": fotos}
 
 
-@app.get("/api/corpus/exitos")
-def corpus_exitos(limite: int = 60) -> dict[str, Any]:
-    """Las fotos del corpus que SI dieron rostro, con su ruta ya servible."""
+@app.get("/api/corpus/personas")
+def corpus_personas() -> dict[str, Any]:
+    """Desglose por carpeta del corpus, para el filtro del explorador."""
     with HistorialStore() as hist:
-        filas = hist.exitos_del_corpus(CORPUS_DIR, limite)
-
-    raiz = CORPUS_DIR.resolve()
-    salida = []
-    for f in filas:
-        try:
-            rel = Path(f["source_path"]).resolve().relative_to(raiz).as_posix()
-        except (ValueError, OSError):
-            continue
-        salida.append({
-            "ruta": rel,
-            "det_score": f["det_score"],
-            # None en filas anteriores a que existiera la columna: no sabemos
-            # si hizo falta margen, y decir 0 seria inventarlo.
-            "margen_agregado": f["margen_agregado"],
-        })
-    return {"limite": limite, "exitos": salida}
+        return {"personas": hist.personas_del_corpus(CORPUS_DIR)}
 
 
 @app.get("/api/busquedas")
