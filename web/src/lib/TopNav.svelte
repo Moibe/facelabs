@@ -3,7 +3,7 @@
 	// Se calcula la posición relativa del cursor (-1..1 en cada eje) y la barra
 	// se inclina suavemente hacia él; vuelve a plano al salir (transition).
 	import { page } from '$app/state';
-	import { estado, cargar } from '$lib/estado.svelte';
+	import { estado } from '$lib/estado.svelte';
 
 	let tiltX = $state(0);
 	let tiltY = $state(0);
@@ -33,10 +33,6 @@
 	function activa(s: (typeof SECCIONES)[number], p: string, otras: boolean): boolean {
 		return s.prefijo ? s.prefijo.test(p) : !otras;
 	}
-
-	// Fuera de Labs no aplica su sidebar, ni el CSV de calibración: Run y
-	// Corpus trabajan contra el corpus externo, que no tiene nada que ver.
-	const fueraDeLabs = $derived(conPrefijo);
 
 	function handleMove(e: MouseEvent) {
 		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -97,29 +93,11 @@
 		{/each}
 	</nav>
 
-	<!-- "API apagada" sí aplica en todas partes: sin API tampoco funciona Run.
-	     El CSV en cambio es de Labs — es la salida de una calibración, y Run
-	     busca contra el corpus, que no tiene nada que ver con eso. -->
+	<!-- Sólo "API apagada": sin API tampoco funciona Run. El CSV en cambio es
+	     de Labs — es la salida de una calibración y vive en el sidebar de esa
+	     sección (Sidebar.svelte), no aquí donde se ve en cualquier página. -->
 	{#if estado.apiCaida}
 		<span class="estado caido">API apagada</span>
-	{:else if fueraDeLabs}
-		<!-- nada: el estado del CSV no significa nada en esta sección -->
-	{:else if estado.cargando}
-		<span class="estado cargando">cargando…</span>
-	{:else if estado.datos}
-		{#if estado.csvs.length > 1}
-			<select
-				class="selector-csv"
-				value={estado.csv}
-				onchange={(e) => cargar((e.currentTarget as HTMLSelectElement).value)}
-			>
-				{#each estado.csvs as c (c)}
-					<option value={c}>{c}</option>
-				{/each}
-			</select>
-		{:else}
-			<span class="estado vivo">{estado.csv}</span>
-		{/if}
 	{/if}
 </header>
 
@@ -240,37 +218,10 @@
 		font-variant-numeric: tabular-nums;
 	}
 
-	.estado.vivo {
-		color: rgba(255, 255, 255, 0.85);
-		background: rgba(255, 255, 255, 0.06);
-	}
-
-	.estado.cargando {
-		color: rgba(255, 255, 255, 0.7);
-	}
-
 	.estado.caido {
 		color: #fecaca;
 		background: rgba(220, 38, 38, 0.22);
 		border-color: rgba(248, 113, 113, 0.5);
-	}
-
-	.selector-csv {
-		font-size: 0.8rem;
-		padding: 0.35rem 0.7rem;
-		border-radius: 999px;
-		border: 1px solid rgba(255, 255, 255, 0.16);
-		/* Sólido, no translúcido: el popup del <select> lo pinta el SO sobre su
-		   propia superficie opaca, sin el gradiente de la página detrás. Un
-		   fondo casi-transparente ahí se ve blanco puro (el bug reportado). */
-		background: rgba(10, 25, 70, 0.95);
-		color: rgba(255, 255, 255, 0.85);
-		font-variant-numeric: tabular-nums;
-	}
-
-	.selector-csv option {
-		background: rgb(10, 25, 70);
-		color: rgba(255, 255, 255, 0.92);
 	}
 
 	@media (max-width: 720px) {
