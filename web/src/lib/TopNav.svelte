@@ -8,10 +8,29 @@
 	let tiltX = $state(0);
 	let tiltY = $state(0);
 
-	// "Run" es su propia sección: el sidebar de Labs no aplica ahí, y el CSV
-	// de calibración tampoco significa nada. /corpus es el explorador que
-	// abren las cifras de Run, así que va con ella.
-	const enRun = $derived(/^\/(run|corpus)/.test(page.url.pathname));
+	// Las tres secciones. Cada una dice cuándo está activa en vez de deducirlo
+	// por descarte: con dos bastaba un "es Run o no", con tres eso se vuelve
+	// una cadena de condiciones que hay que tocar cada vez que se agrega una.
+	// Labs es la que no tiene prefijo propio (vive en /, /set, /pares…), así
+	// que se define como "ninguna de las otras".
+	const SECCIONES = [
+		{ href: '/set', etiqueta: 'Labs', prefijo: null },
+		{ href: '/run', etiqueta: 'Run', prefijo: /^\/run/ },
+		{ href: '/corpus', etiqueta: 'Corpus', prefijo: /^\/corpus/ }
+	];
+
+	const ruta = $derived(page.url.pathname);
+	const conPrefijo = $derived(
+		SECCIONES.some((s) => s.prefijo && s.prefijo.test(ruta))
+	);
+
+	function activa(s: (typeof SECCIONES)[number], p: string, otras: boolean): boolean {
+		return s.prefijo ? s.prefijo.test(p) : !otras;
+	}
+
+	// Fuera de Labs no aplica su sidebar, ni el CSV de calibración: Run y
+	// Corpus trabajan contra el corpus externo, que no tiene nada que ver.
+	const fueraDeLabs = $derived(conPrefijo);
 
 	function handleMove(e: MouseEvent) {
 		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -43,8 +62,15 @@
 	<div class="lema">verificación 1:1 · research, no comercial</div>
 
 	<nav class="secciones" aria-label="Secciones">
-		<a href="/set" class="seccion" aria-current={!enRun ? 'page' : undefined}>Labs</a>
-		<a href="/run" class="seccion" aria-current={enRun ? 'page' : undefined}>Run</a>
+		{#each SECCIONES as s (s.href)}
+			<a
+				href={s.href}
+				class="seccion"
+				aria-current={activa(s, ruta, conPrefijo) ? 'page' : undefined}
+			>
+				{s.etiqueta}
+			</a>
+		{/each}
 	</nav>
 
 	<div class="spacer"></div>
@@ -54,7 +80,7 @@
 	     busca contra el corpus, que no tiene nada que ver con eso. -->
 	{#if estado.apiCaida}
 		<span class="estado caido">API apagada</span>
-	{:else if enRun}
+	{:else if fueraDeLabs}
 		<!-- nada: el estado del CSV no significa nada en esta sección -->
 	{:else if estado.cargando}
 		<span class="estado cargando">cargando…</span>

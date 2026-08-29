@@ -9,11 +9,12 @@
 	let { children } = $props();
 	let collapsed = $state(false);
 
-	// "Run" es su propia sección, sin relación con las páginas de Labs (El set /
-	// Entorno / Pares / Panorama): el sidebar de esas 4 no aplica ahí, así que no
-	// se muestra en vez de ofrecer links que no llevan a nada relevante.
-	// /corpus es el explorador que abren las cifras de Run, así que va con ella.
-	const enRun = $derived(/^\/(run|corpus)/.test(page.url.pathname));
+	// Run y Corpus son secciones propias, sin relación con las páginas de Labs
+	// (El set / Entorno / Pares / Panorama): el sidebar de esas 4 no aplica ahí,
+	// así que no se muestra en vez de ofrecer links que no llevan a nada
+	// relevante. Labs es la sección sin prefijo propio (vive en /, /set, /pares…),
+	// de ahí que se detecte por descarte y no por una lista de rutas suyas.
+	const fueraDeLabs = $derived(/^\/(run|corpus)/.test(page.url.pathname));
 
 	// Una sola carga al arrancar; las páginas leen del estado compartido.
 	$effect(() => {
@@ -47,10 +48,10 @@
 </svelte:head>
 
 <TopNav />
-{#if !enRun}
+{#if !fueraDeLabs}
 	<Sidebar {collapsed} {toggleCollapsed} />
 {/if}
-<main class={collapsed || enRun ? 'collapsed' : ''}>
+<main class={collapsed || fueraDeLabs ? 'collapsed' : ''}>
 	<div class="work-scroll">
 		{#if estado.apiCaida}
 			<!-- Estado de primera clase, no un error escondido en consola: el caso
