@@ -592,7 +592,7 @@ class PeticionIndexarCorpus(BaseModel):
 _indexar_lock = threading.Lock()
 _indexar_estado: dict[str, Any] = {
     "en_curso": False,
-    "etapa": "",  # "cargando_modelo" | "indexando" | "pausado" | ""
+    "etapa": "",  # cargando_modelo | explorando | indexando | pausado | ""
     "actual": 0,
     "total": 0,
     "archivo": "",
@@ -640,33 +640,52 @@ def corpus_indexar(p: PeticionIndexarCorpus) -> dict[str, Any]:
             _indexar_estado.update(info)
 
     def _trabajo() -> None:
-        # El historial se abre DENTRO del hilo: sqlite3 no comparte conexiones
-        # entre hilos, y esta es la unica que escribe corridas.
-        with HistorialStore() as hist:
+        # El try envuelve TODO, incluido abrir el historial. Cuando el `with
+        # HistorialStore()` quedaba fuera, un fallo al abrirlo (p.ej. "database
+        # is locked") mataba el hilo sin pasar por el finally: en_curso se
+        # quedaba en true para siempre, la pantalla decia "Cargando el
+        # modelo…" indefinidamente y el candado rechazaba cualquier corrida
+        # nueva con 409. Un error al arrancar tiene que verse como un error,
+        # no como un trabajo eterno.
+        hist = None
+        corrida_id = None
+        try:
+            # El historial se abre DENTRO del hilo: sqlite3 no comparte
+            # conexiones entre hilos, y esta es la unica que escribe corridas.
+            hist = HistorialStore()
             corrida_id = hist.iniciar_corrida(
                 "indexado", str(CORPUS_DIR), p.limite_carpetas, p.limite_por_carpeta)
-            try:
-                from facid.busqueda import indexar_corpus
-                from facid.runtime import load_runtime
-                rt = load_runtime(device=p.device,
-                                  require_gpu=False if p.allow_cpu_fallback else None,
-                                  verbose=False)
-                resultado = indexar_corpus(
-                    CORPUS_DIR, rt,
-                    limite_carpetas=p.limite_carpetas, limite_por_carpeta=p.limite_por_carpeta,
-                    face_policy=p.face_policy, on_progreso=_reportar,
-                    pausable=_permiso_indexar, cancelable=_cancelar_indexar)
-                hist.cerrar_corrida(corrida_id, resultado=resultado)
-                with _indexar_lock:
-                    _indexar_estado["resultado"] = resultado
-            except Exception as exc:
-                msg = f"{type(exc).__name__}: {exc}"
-                hist.cerrar_corrida(corrida_id, error=msg)
-                with _indexar_lock:
-                    _indexar_estado["error"] = msg
-            finally:
-                with _indexar_lock:
-                    _indexar_estado["en_curso"] = False
+
+            from facid.busqueda import indexar_corpus
+            from facid.runtime import load_runtime
+            rt = load_runtime(device=p.device,
+                              require_gpu=False if p.allow_cpu_fallback else None,
+                              verbose=False)
+            resultado = indexar_corpus(
+                CORPUS_DIR, rt,
+                limite_carpetas=p.limite_carpetas, limite_por_carpeta=p.limite_por_carpeta,
+                face_policy=p.face_policy, on_progreso=_reportar,
+                pausable=_permiso_indexar, cancelable=_cancelar_indexar)
+            hist.cerrar_corrida(corrida_id, resultado=resultado)
+            with _indexar_lock:
+                _indexar_estado["resultado"] = resultado
+        except Exception as exc:
+            msg = f"{type(exc).__name__}: {exc}"
+            if hist is not None and corrida_id is not None:
+                try:
+                    hist.cerrar_corrida(corrida_id, error=msg)
+                except Exception:
+                    pass    # si la base es justo lo que fallo, no insistir
+            with _indexar_lock:
+                _indexar_estado["error"] = msg
+        finally:
+            if hist is not None:
+                try:
+                    hist.close()
+                except Exception:
+                    pass
+            with _indexar_lock:
+                _indexar_estado["en_curso"] = False
 
     threading.Thread(target=_trabajo, daemon=True).start()
     with _indexar_lock:

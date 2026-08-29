@@ -24,6 +24,7 @@ Separado en dos pasos a proposito:
 
 from __future__ import annotations
 
+import os
 import threading
 from collections import Counter
 from pathlib import Path
@@ -61,18 +62,27 @@ def descubrir_corpus(corpus_dir: str | Path, *,
     if limite_por_carpeta is not None and limite_por_carpeta <= 0:
         limite_por_carpeta = None
 
-    carpetas = sorted(p for p in raiz.iterdir() if p.is_dir())
+    # os.scandir y no Path.iterdir()+is_file(): is_file() hace un stat POR
+    # ARCHIVO, mientras que scandir trae el tipo en la propia entrada del
+    # directorio. Medido sobre este corpus (102 mil fotos en ~510 carpetas):
+    # 53.8s -> 1.3s. Con el recorrido ocurriendo ANTES del primer reporte de
+    # avance, esos 54 segundos se veian como la app colgada en "cargando".
+    with os.scandir(raiz) as it:
+        carpetas = sorted((e.name, e.path) for e in it if e.is_dir())
     if limite_carpetas is not None:
         carpetas = carpetas[:limite_carpetas]
 
     resultado: dict[str, list[Path]] = {}
-    for sub in carpetas:
-        fotos = sorted(f for f in sub.iterdir()
-                       if f.is_file() and f.suffix.lower() in EXTENSIONES)
+    for nombre, ruta in carpetas:
+        with os.scandir(ruta) as it:
+            fotos = sorted(
+                Path(e.path) for e in it
+                if e.is_file() and os.path.splitext(e.name)[1].lower() in EXTENSIONES
+            )
         if limite_por_carpeta is not None:
             fotos = fotos[:limite_por_carpeta]
         if fotos:
-            resultado[sub.name] = fotos
+            resultado[nombre] = fotos
     return resultado
 
 
@@ -96,6 +106,14 @@ def indexar_corpus(corpus_dir: str | Path, runtime, *,
     lo que ya se alcanzo a guardar. Se revisa tambien mientras se esta
     pausado, para que un stop no tenga que esperar a que termine la pausa.
     """
+    # Avisar ANTES de recorrer: aunque scandir lo bajo a ~1s, recorrer decenas
+    # de miles de archivos no es instantaneo, y sin este aviso la pantalla se
+    # quedaba en "cargando el modelo" — que ya habia terminado — sin forma de
+    # distinguir "trabajando" de "colgado".
+    if on_progreso:
+        on_progreso({"actual": 0, "total": 0, "archivo": "", "etapa": "explorando",
+                     "en_cache": 0, "nuevas": 0, "nuevas_ok": 0, "nuevas_fallidas": 0})
+
     corpus = descubrir_corpus(corpus_dir, limite_carpetas=limite_carpetas,
                               limite_por_carpeta=limite_por_carpeta)
     rutas = [f for fotos in corpus.values() for f in fotos]

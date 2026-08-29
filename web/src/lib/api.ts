@@ -276,7 +276,7 @@ export type CorpusResumen = {
 
 export type IndexarEstado = {
 	en_curso: boolean;
-	etapa: 'cargando_modelo' | 'indexando' | 'pausado' | '';
+	etapa: 'cargando_modelo' | 'explorando' | 'indexando' | 'pausado' | '';
 	actual: number;
 	total: number;
 	archivo: string;

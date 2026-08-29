@@ -444,6 +444,8 @@
 				<p class="tenue progreso-texto">
 					{#if progresoIndexar.etapa === 'cargando_modelo'}
 						Cargando el modelo…
+					{:else if progresoIndexar.etapa === 'explorando'}
+						Recorriendo el corpus para ver cuántas fotos hay…
 					{:else if progresoIndexar.etapa === 'indexando'}
 						Indexando {progresoIndexar.actual}/{progresoIndexar.total} ·
 						<strong>{progresoIndexar.en_cache}</strong> ya estaban ·

@@ -93,6 +93,33 @@ CREATE INDEX IF NOT EXISTS ix_fallos_sha ON fallos (image_sha256);
 _FALLOS_INDEPENDIENTES_DE_POLICY = (ErrorCode.NO_FACE, ErrorCode.UNREADABLE_IMAGE)
 
 
+def activar_wal(conn: sqlite3.Connection) -> None:
+    """Modo WAL: los lectores dejan de esperar al escritor.
+
+    En el journal por defecto, una escritura abierta bloquea CUALQUIER
+    lectura. Con una indexacion de horas escribiendo casi sin pausa —
+    ademas por lotes, que mantiene la transaccion abierta a proposito — eso
+    dejaba al API entero devolviendo "database is locked" en /cobertura y en
+    el explorador. En WAL, lectores y escritor no se estorban.
+
+    Es una propiedad del ARCHIVO, no de la conexion: basta con que alguien lo
+    ponga una vez. Se hace en cada apertura igual porque es barato y asi no
+    depende de que exista una base ya migrada.
+
+    Si falla (un sistema de archivos que no lo soporta), no es fatal: se
+    sigue con el journal de siempre, mas lento pero correcto.
+    """
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        # NORMAL en vez de FULL: con WAL sigue siendo seguro ante caidas de la
+        # aplicacion, y evita un fsync por commit. Con lotes de miles de fotos
+        # ese fsync domina el tiempo.
+        conn.execute("PRAGMA synchronous=NORMAL")
+    except sqlite3.DatabaseError:
+        pass
+
+
+
 class EmbeddingStore:
     def __init__(self, db_path: Path | str = INDEX_DB,
                  emb_dir: Path | str = EMBEDDINGS_DIR):
@@ -107,6 +134,7 @@ class EmbeddingStore:
         # revienta al instante con "database is locked" en vez de esperar su
         # turno unos segundos.
         self.conn = sqlite3.connect(str(self.db_path), timeout=30.0)
+        activar_wal(self.conn)
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(ESQUEMA)
         self.conn.commit()
@@ -172,8 +200,13 @@ class EmbeddingStore:
         # Commit por lotes: un fsync por archivo sobre 85k archivos domina el
         # tiempo total. Perder los ultimos si el proceso muere es inofensivo
         # (se vuelven a hashear la proxima vez).
+        #
+        # 50 y no 500: entre commits la transaccion de escritura queda ABIERTA.
+        # Con lotes grandes eso son varios segundos de lock por lote, y aunque
+        # WAL ya evita que estorbe a los lectores, un lote grande tambien es
+        # mas trabajo que deshacer si el proceso muere a la mitad.
         self._stat_pendientes += 1
-        if self._stat_pendientes >= 500:
+        if self._stat_pendientes >= 50:
             self.conn.commit()
             self._stat_pendientes = 0
         return sha

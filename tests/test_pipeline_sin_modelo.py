@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import sqlite3
 import sys
 import tempfile
 from pathlib import Path
@@ -366,6 +367,36 @@ def test_store():
 
     st3 = EmbeddingStore()
     check(st3.sha_de(img) == sha_2, "la stat cache sobrevive reabrir el store")
+
+    # --- concurrencia: leer NO debe esperar a que el escritor termine ---
+    # Sin WAL, una indexacion de horas (que escribe por lotes, con la
+    # transaccion abierta a proposito) dejaba al API devolviendo
+    # "database is locked" en cobertura y en el explorador.
+    check(st3.conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal",
+          "la base queda en modo WAL")
+
+    escritor = EmbeddingStore()
+    escritor.conn.execute("BEGIN IMMEDIATE")
+    escritor.conn.execute(
+        "INSERT OR REPLACE INTO stat_cache (source_path, size, mtime_ns, sha256) "
+        "VALUES ('/x/pendiente.png', 1, 1, 'zz')")
+    # A proposito SIN commit: el escritor tiene la transaccion abierta.
+
+    import time as _t
+    lector = sqlite3.connect(str(TMP / "out" / "index.sqlite"), timeout=3.0)
+    t0 = _t.time()
+    try:
+        n = lector.execute("SELECT COUNT(*) FROM embeddings").fetchone()[0]
+        tardo = _t.time() - t0
+        check(True, f"un lector entra con el escritor a media transaccion ({tardo:.2f}s, {n} filas)")
+        check(tardo < 1.0, f"y entra RAPIDO, sin esperar el timeout (tardo {tardo:.2f}s)")
+    except sqlite3.OperationalError as e:
+        check(False, f"el lector quedo bloqueado: {e}")
+    finally:
+        lector.close()
+        escritor.conn.rollback()
+        escritor.close()
+
     st3.close()
 
 

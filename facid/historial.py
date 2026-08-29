@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import INDEX_DB
+from .store import activar_wal
 from .util import utc_now_iso
 
 ESQUEMA_HISTORIAL = """
@@ -95,9 +96,11 @@ class HistorialStore:
     def __init__(self, db_path: Path | str = INDEX_DB):
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        # Ver la nota en store.py: comparten archivo con una indexacion que
-        # puede estar escribiendo durante horas.
+        # Ver las notas en store.py: comparten archivo con una indexacion que
+        # puede estar escribiendo durante horas, y sin WAL las lecturas de aqui
+        # (cobertura, explorador) se quedaban esperando a que terminara.
         self.conn = sqlite3.connect(str(self.db_path), timeout=30.0)
+        activar_wal(self.conn)
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(ESQUEMA_HISTORIAL)
         self.conn.commit()
