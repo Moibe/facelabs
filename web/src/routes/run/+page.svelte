@@ -165,16 +165,16 @@
 	const GROSOR_ANILLO = 9;
 	const CX = 32;
 	const CY = 32;
-	const segmentosExterior = $derived(segmentosAnillo(anilloExterior, 26));
-	const segmentosInterior = $derived(segmentosAnillo(anilloInterior, 15));
+	const R_EXTERIOR = 26;
+	const R_INTERIOR = 15;
+	// Borde visible de la dona: el radio del anillo de AFUERA mas medio grosor.
+	const R_BORDE = R_EXTERIOR + GROSOR_ANILLO / 2;
+	const segmentosExterior = $derived(segmentosAnillo(anilloExterior, R_EXTERIOR));
+	const segmentosInterior = $derived(segmentosAnillo(anilloInterior, R_INTERIOR));
 
 	// ── Callout (línea + etiqueta) del segmento en hover, igual que en el
-	// pastel de fortunecity: un punto en el borde del anillo, un codo un poco
-	// más afuera y un tramo horizontal hacia el texto. Ahí SIEMPRE se ancla
-	// a la izquierda (texto con text-anchor="end"), a diferencia de
-	// fortunecity que decide el lado segun el angulo: este pastel vive
-	// pegado al borde derecho de la tarjeta (margin-left:auto), asi que a la
-	// derecha no hay espacio para el texto caiga donde caiga la rebanada.
+	// pastel de fortunecity: un punto sobre el anillo, un codo hacia afuera y
+	// un tramo horizontal hasta el texto.
 	let hoveredPastel = $state<string | null>(null);
 
 	type Callout = {
@@ -184,6 +184,7 @@
 		y2: number;
 		x3: number;
 		y3: number;
+		anchor: 'start' | 'end';
 		etiqueta: string;
 		valor: number;
 		pct: number;
@@ -193,16 +194,31 @@
 		const rad = ((anguloGrados - 90) * Math.PI) / 180;
 		const cosA = Math.cos(rad);
 		const sinA = Math.sin(rad);
-		const r1 = s.r + GROSOR_ANILLO / 2; // borde visible de ese anillo
-		const r2 = r1 + 6; // codo, un poco más afuera
-		const kink = 22; // tramo horizontal, siempre hacia la izquierda
+		// El punto ancla va SOBRE el anillo señalado (a la mitad del trazo),
+		// para que se vea a cual de los dos pertenece el dato. Pero el codo
+		// sale siempre mas alla de R_BORDE, no del anillo propio: cuando se
+		// calculaba contra el anillo interior, el codo quedaba dentro de la
+		// dona y el texto se desplegaba encima de ella.
+		const r1 = s.r;
+		const r2 = R_BORDE + 7;
+		const kink = 10;
+		// El lado lo decide el angulo, como en fortunecity. Forzar todo a la
+		// izquierda hacia que la linea cruzara la dona de lado a lado en los
+		// segmentos de la mitad derecha — que aqui son la mayoria.
+		const anchor: 'start' | 'end' = cosA >= 0 ? 'start' : 'end';
+		const dx = anchor === 'start' ? kink : -kink;
 		return {
 			x1: CX + r1 * cosA,
 			y1: CY + r1 * sinA,
 			x2: CX + r2 * cosA,
 			y2: CY + r2 * sinA,
-			x3: CX + r2 * cosA - kink,
+			// El codo se aleja del eje vertical en la MISMA direccion en que
+			// ya apunta el segmento, asi que p3 siempre queda mas lejos del
+			// centro que p2 — y p2 ya esta fuera de la dona. Esa es la
+			// garantia de que el texto nunca cae adentro del circulo.
+			x3: CX + r2 * cosA + dx,
 			y3: CY + r2 * sinA,
+			anchor,
 			etiqueta: s.etiqueta,
 			valor: s.valor,
 			pct: s.pct
@@ -522,10 +538,20 @@
 							<g class="callout-pastel">
 								<circle cx={c.x1} cy={c.y1} r="1.6" fill="#fff" />
 								<polyline points="{c.x1},{c.y1} {c.x2},{c.y2} {c.x3},{c.y3}" class="callout-linea" />
-								<text x={c.x3 - 2} y={c.y3 - 3} text-anchor="end" class="callout-nombre">
+								<text
+										x={c.x3 + (c.anchor === 'start' ? 2 : -2)}
+										y={c.y3 - 3}
+										text-anchor={c.anchor}
+										class="callout-nombre"
+									>
 									{c.etiqueta}
 								</text>
-								<text x={c.x3 - 2} y={c.y3 + 6} text-anchor="end" class="callout-sub">
+								<text
+										x={c.x3 + (c.anchor === 'start' ? 2 : -2)}
+										y={c.y3 + 6}
+										text-anchor={c.anchor}
+										class="callout-sub"
+									>
 									{c.valor.toLocaleString()} · {pct(c.pct)}
 								</text>
 							</g>
@@ -1009,16 +1035,20 @@
 		flex-direction: column;
 	}
 
-	/* margin-left: auto empuja el pastel hasta el borde derecho de la
+	/* margin-left: auto empuja el pastel hacia el borde derecho de la
 	   tarjeta, aunque las cifras de la izquierda no llenen todo el ancho.
 	   overflow: visible porque el callout de hover se sale del viewBox de
-	   64x64 (el texto vive afuera del anillo, no adentro). */
+	   64x64 (el texto vive afuera del anillo, no adentro).
+
+	   El margin-right NO es aire decorativo: reserva el lugar donde caen las
+	   etiquetas de los segmentos de la mitad derecha. Sin el, el texto se
+	   salia de la tarjeta en vez de quedar dentro. */
 	.pastel {
-		width: 72px;
-		height: 72px;
+		width: 100px;
+		height: 100px;
 		flex: none;
 		margin-left: auto;
-		margin-right: 1.6rem;
+		margin-right: 7rem;
 		align-self: center;
 		overflow: visible;
 	}
