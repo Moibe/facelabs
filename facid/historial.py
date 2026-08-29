@@ -288,6 +288,29 @@ class HistorialStore:
                LIMIT ?""",
             (n, prefijo, limite))]
 
+    def exitos_del_corpus(self, corpus_dir: str | Path,
+                          limite: int = 60) -> list[dict[str, Any]]:
+        """Las fotos del corpus que SI dieron rostro.
+
+        Trae det_score y margen_agregado porque ahi esta lo interesante: un
+        margen > 0 quiere decir que esa cara solo aparecio despues de
+        rellenarle el borde, o sea que el recorte original venia demasiado
+        pegado. Verlo por foto dice mas del corpus que el conteo total.
+        """
+        if not self._existe_tabla("embeddings"):
+            return []
+        prefijo = str(Path(corpus_dir))
+        n = len(prefijo)
+        return [dict(r) for r in self.conn.execute(
+            """SELECT source_path, det_score, margen_agregado, n_faces_detected,
+                      MAX(created_at) AS created_at
+               FROM embeddings
+               WHERE substr(source_path,1,?)=?
+               GROUP BY image_sha256
+               ORDER BY created_at DESC
+               LIMIT ?""",
+            (n, prefijo, limite))]
+
     def cobertura(self, corpus_dir: str | Path) -> dict[str, Any]:
         """Cuantas fotos del corpus ya se procesaron alguna vez.
 

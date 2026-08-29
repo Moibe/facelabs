@@ -451,6 +451,29 @@ def test_historial_api():
     check(len(cli.get("/api/corpus/fallos", params={"limite": 1}).json()["fallos"]) <= 1,
           "respeta el limite")
 
+    # --- exitos del corpus: ver las que SI dieron rostro ---
+    import numpy as _np
+    with EmbeddingStore() as st:
+        st.guardar({
+            "image_sha256": "a1" * 32,
+            "source_path": str(CORPUS / "candidato_b" / "01.jpg"),
+            "embedding": _np.ones(512, dtype=_np.float32) / _np.sqrt(512),
+            "det_score": 0.87, "bbox": [1, 2, 3, 4], "n_faces_detected": 1,
+            "face_selection": "unico", "all_det_scores": [0.87],
+            "exif_orientation_applied": False, "margen_agregado": 0.5,
+        }, RtFalso(), "strict")
+
+    r = cli.get("/api/corpus/exitos")
+    check(r.status_code == 200, f"exitos del corpus responde 200 (dio {r.status_code})")
+    ex = r.json()["exitos"]
+    mio = [e for e in ex if e["ruta"] == "candidato_b/01.jpg"]
+    check(len(mio) == 1, f"lista el exito del corpus (rutas: {[e['ruta'] for e in ex]})")
+    check(mio[0]["det_score"] == 0.87, "trae el det_score")
+    check(mio[0]["margen_agregado"] == 0.5,
+          "trae el margen que hizo falta (asi se ve cual fue 'rescatada')")
+    check(all(not x["ruta"].startswith(("C:", "/")) for x in ex),
+          "las rutas vienen relativas al corpus")
+
     r = cli.get("/api/busquedas")
     check(r.status_code == 200 and "busquedas" in r.json(), "lista de busquedas responde 200")
     n_antes = len(r.json()["busquedas"])

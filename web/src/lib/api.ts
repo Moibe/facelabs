@@ -360,6 +360,14 @@ export type FalloCorpus = {
 	n_faces_detected: number | null;
 };
 
+export type ExitoCorpus = {
+	ruta: string;
+	det_score: number | null;
+	/** >0 = sólo se detectó tras rellenarle ese % de borde. null = se extrajo
+	 *  antes de que existiera el reintento, así que no se sabe. */
+	margen_agregado: number | null;
+};
+
 export type BusquedaGuardada = {
 	id: number;
 	persona: string;
@@ -458,6 +466,8 @@ export const api = {
 	// recortes malos o fotos que de verdad no traen cara.
 	fallosCorpus: (limite = 60) =>
 		pedir<{ limite: number; fallos: FalloCorpus[] }>('/api/corpus/fallos', { limite }),
+	exitosCorpus: (limite = 60) =>
+		pedir<{ limite: number; exitos: ExitoCorpus[] }>('/api/corpus/exitos', { limite }),
 	busquedas: (limite = 20) => pedir<{ busquedas: BusquedaGuardada[] }>('/api/busquedas', { limite }),
 	verBusqueda: (id: number) => pedir<ResultadoBusqueda>(`/api/busquedas/${id}`),
 	borrarBusqueda: (id: number) => enviar<{ borrada: number }>(`/api/busquedas/${id}/borrar`, {}),

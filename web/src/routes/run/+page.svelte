@@ -4,6 +4,7 @@
 		type BusquedaGuardada,
 		type Cobertura,
 		type CorpusResumen,
+		type ExitoCorpus,
 		type FalloCorpus,
 		type IndexarEstado,
 		type Personas,
@@ -90,23 +91,29 @@
 	let cobertura = $state<Cobertura | null>(null);
 	let historial = $state<BusquedaGuardada[]>([]);
 
-	// Las que no dieron rostro, para poder verlas: el conteo solo no dice si
-	// son recortes malos o fotos que de verdad no traen cara.
+	// Poder VER las fotos detrás de cada cifra: el conteo solo no dice si lo
+	// que falla son recortes malos, ni cuáles caras hubo que rescatar con
+	// margen. Solo una tira abierta a la vez — dos listas de 60 miniaturas
+	// juntas empujarian los controles fuera de la pantalla.
+	let tira = $state<'fallos' | 'exitos' | null>(null);
 	let fallos = $state<FalloCorpus[] | null>(null);
-	let cargandoFallos = $state(false);
+	let exitos = $state<ExitoCorpus[] | null>(null);
+	let cargandoTira = $state<'fallos' | 'exitos' | null>(null);
 
-	async function verFallos() {
-		if (fallos) {
-			fallos = null; // segundo clic: cerrar
+	async function verTira(cual: 'fallos' | 'exitos') {
+		if (tira === cual) {
+			tira = null; // segundo clic: cerrar
 			return;
 		}
-		cargandoFallos = true;
+		cargandoTira = cual;
 		try {
-			fallos = (await api.fallosCorpus(60)).fallos;
+			if (cual === 'fallos') fallos = (await api.fallosCorpus(60)).fallos;
+			else exitos = (await api.exitosCorpus(60)).exitos;
+			tira = cual;
 		} catch (e) {
 			errorIndexar = e instanceof Error ? e.message : String(e);
 		} finally {
-			cargandoFallos = false;
+			cargandoTira = null;
 		}
 	}
 
@@ -298,29 +305,81 @@
 					<span class="n">{cobertura.procesadas.toLocaleString()}</span>
 					<span class="et">fotos ya procesadas</span>
 				</div>
-				<div class="cifra">
-					<span class="n">{cobertura.con_rostro.toLocaleString()}</span>
-					<span class="et">con rostro usable</span>
-				</div>
 				<button
 					type="button"
 					class="cifra cifra-clic"
-					class:abierta={!!fallos}
-					onclick={verFallos}
-					disabled={cargandoFallos || !cobertura.sin_rostro}
+					class:abierta={tira === 'exitos'}
+					onclick={() => verTira('exitos')}
+					disabled={!!cargandoTira || !cobertura.con_rostro}
+					title={cobertura.con_rostro ? 'Ver cuáles' : 'No hay ninguna'}
+				>
+					<span class="n">{cobertura.con_rostro.toLocaleString()}</span>
+					<span class="et">
+						con rostro usable
+						{#if cobertura.con_rostro}
+							· {cargandoTira === 'exitos'
+								? 'abriendo…'
+								: tira === 'exitos'
+									? 'ocultar'
+									: 'ver cuáles'}
+						{/if}
+					</span>
+				</button>
+				<button
+					type="button"
+					class="cifra cifra-clic"
+					class:abierta={tira === 'fallos'}
+					onclick={() => verTira('fallos')}
+					disabled={!!cargandoTira || !cobertura.sin_rostro}
 					title={cobertura.sin_rostro ? 'Ver cuáles' : 'No hay ninguna'}
 				>
 					<span class="n">{cobertura.sin_rostro.toLocaleString()}</span>
 					<span class="et">
 						sin rostro detectable
 						{#if cobertura.sin_rostro}
-							· {cargandoFallos ? 'abriendo…' : fallos ? 'ocultar' : 'ver cuáles'}
+							· {cargandoTira === 'fallos'
+								? 'abriendo…'
+								: tira === 'fallos'
+									? 'ocultar'
+									: 'ver cuáles'}
 						{/if}
 					</span>
 				</button>
 			</div>
 
-			{#if fallos}
+			{#if tira === 'exitos' && exitos}
+				{#if !exitos.length}
+					<p class="tenue">Todavía no hay ninguna.</p>
+				{:else}
+					{@const conMargen = exitos.filter((e) => (e.margen_agregado ?? 0) > 0).length}
+					<p class="tenue">
+						Las {exitos.length} más recientes.
+						{#if conMargen}
+							<strong>{conMargen}</strong> de ellas sólo aparecieron tras rellenarles el borde
+							(marcadas): eso quiere decir que el recorte original venía demasiado pegado a la
+							cara.
+						{/if}
+					</p>
+					<div class="tira">
+						{#each exitos as e (e.ruta)}
+							<figure>
+								<img src={api.urlFotoCorpus(e.ruta)} alt={e.ruta} loading="lazy" />
+								<figcaption>
+									<span class="bien">det {e.det_score?.toFixed(2) ?? '—'}</span>
+									{#if (e.margen_agregado ?? 0) > 0}
+										<span class="rescatada"
+											>· +{Math.round((e.margen_agregado ?? 0) * 100)}% margen</span
+										>
+									{/if}
+									<br />{e.ruta.split('/')[0]}
+								</figcaption>
+							</figure>
+						{/each}
+					</div>
+				{/if}
+			{/if}
+
+			{#if tira === 'fallos' && fallos}
 				{#if !fallos.length}
 					<p class="tenue">No quedó ninguna registrada.</p>
 				{:else}
@@ -976,6 +1035,12 @@
 
 	.mal {
 		color: var(--mal);
+	}
+
+	/* Amarillo reservado para "esto salio, pero con ayuda" — ni exito limpio
+	   ni fallo. Va siempre con el texto "+N% margen", nunca solo el color. */
+	.rescatada {
+		color: #fcd34d;
 	}
 
 	.num {

@@ -789,6 +789,29 @@ def corpus_fallos(limite: int = 60) -> dict[str, Any]:
     return {"limite": limite, "fallos": salida}
 
 
+@app.get("/api/corpus/exitos")
+def corpus_exitos(limite: int = 60) -> dict[str, Any]:
+    """Las fotos del corpus que SI dieron rostro, con su ruta ya servible."""
+    with HistorialStore() as hist:
+        filas = hist.exitos_del_corpus(CORPUS_DIR, limite)
+
+    raiz = CORPUS_DIR.resolve()
+    salida = []
+    for f in filas:
+        try:
+            rel = Path(f["source_path"]).resolve().relative_to(raiz).as_posix()
+        except (ValueError, OSError):
+            continue
+        salida.append({
+            "ruta": rel,
+            "det_score": f["det_score"],
+            # None en filas anteriores a que existiera la columna: no sabemos
+            # si hizo falta margen, y decir 0 seria inventarlo.
+            "margen_agregado": f["margen_agregado"],
+        })
+    return {"limite": limite, "exitos": salida}
+
+
 @app.get("/api/busquedas")
 def listar_busquedas(limite: int = 20) -> dict[str, Any]:
     with HistorialStore() as hist:
