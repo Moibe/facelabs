@@ -90,6 +90,50 @@
 	let cobertura = $state<Cobertura | null>(null);
 	let historial = $state<BusquedaGuardada[]>([]);
 
+	// Pastel de cobertura: mismos tres estados que las cifras de arriba, nada
+	// nuevo — solo la proporción se ve peor en texto que en área.
+	type Rebanada = { etiqueta: string; valor: number; color: string };
+	const piezasPastel = $derived.by((): Rebanada[] => {
+		if (!cobertura || !cobertura.total_ultimo_conteo) return [];
+		const pendientes = Math.max(0, cobertura.total_ultimo_conteo - cobertura.procesadas);
+		return [
+			{ etiqueta: 'con rostro usable', valor: cobertura.con_rostro, color: 'var(--bien)' },
+			{ etiqueta: 'sin rostro detectable', valor: cobertura.sin_rostro, color: 'var(--mal)' },
+			{ etiqueta: 'sin procesar aún', valor: pendientes, color: 'rgba(255, 255, 255, 0.18)' }
+		].filter((r) => r.valor > 0);
+	});
+
+	// Angulo 0 = arriba (12 en punto), crece en sentido horario — igual que
+	// un reloj o un pie chart de toda la vida.
+	function puntoEnCirculo(cx: number, cy: number, r: number, anguloGrados: number) {
+		const rad = ((anguloGrados - 90) * Math.PI) / 180;
+		return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) };
+	}
+
+	function cunaPastel(cx: number, cy: number, r: number, anguloIni: number, anguloFin: number): string {
+		const p1 = puntoEnCirculo(cx, cy, r, anguloIni);
+		const p2 = puntoEnCirculo(cx, cy, r, anguloFin);
+		const grande = anguloFin - anguloIni > 180 ? 1 : 0;
+		return `M ${cx} ${cy} L ${p1.x} ${p1.y} A ${r} ${r} 0 ${grande} 1 ${p2.x} ${p2.y} Z`;
+	}
+
+	// Con una sola rebanada al 100% el arco de 360° degenera (empieza y
+	// termina en el mismo punto, area cero) — un circulo entero cubre ese caso.
+	const rebanadasPastel = $derived.by(() => {
+		const total = piezasPastel.reduce((s, r) => s + r.valor, 0);
+		if (!total) return [];
+		if (piezasPastel.length === 1) {
+			return [{ ...piezasPastel[0], total, pct: 1, path: null as string | null }];
+		}
+		let acumulado = 0;
+		return piezasPastel.map((r) => {
+			const anguloIni = (acumulado / total) * 360;
+			acumulado += r.valor;
+			const anguloFin = (acumulado / total) * 360;
+			return { ...r, total, pct: r.valor / total, path: cunaPastel(32, 32, 32, anguloIni, anguloFin) };
+		});
+	});
+
 	// Poder VER las fotos detrás de cada cifra: el conteo solo no dice si lo
 	// que falla son recortes malos, ni cuáles caras hubo que rescatar con
 	// margen. Solo una tira abierta a la vez — dos listas de 60 miniaturas
@@ -347,6 +391,26 @@
 						<span class="n">~{cobertura.total_ultimo_conteo.toLocaleString()}</span>
 						<span class="et">en el corpus (último recorrido)</span>
 					</div>
+				{/if}
+				{#if rebanadasPastel.length}
+					<svg
+						class="pastel"
+						viewBox="0 0 64 64"
+						role="img"
+						aria-label="Proporción del corpus con rostro, sin rostro y sin procesar"
+					>
+						{#each rebanadasPastel as r (r.etiqueta)}
+							{#if r.path}
+								<path d={r.path} fill={r.color}
+									><title>{r.etiqueta}: {r.valor.toLocaleString()} ({pct(r.pct)})</title></path
+								>
+							{:else}
+								<circle cx="32" cy="32" r="32" fill={r.color}
+									><title>{r.etiqueta}: {r.valor.toLocaleString()} ({pct(r.pct)})</title></circle
+								>
+							{/if}
+						{/each}
+					</svg>
 				{/if}
 			</div>
 
@@ -823,6 +887,22 @@
 	.cifra {
 		display: flex;
 		flex-direction: column;
+	}
+
+	/* margin-left: auto empuja el pastel hasta el borde derecho de la
+	   tarjeta, aunque las cifras de la izquierda no llenen todo el ancho. */
+	.pastel {
+		width: 64px;
+		height: 64px;
+		flex: none;
+		margin-left: auto;
+		align-self: center;
+	}
+
+	.pastel path,
+	.pastel circle {
+		stroke: var(--plot-surface);
+		stroke-width: 1.5;
 	}
 
 	.cifra .n {
