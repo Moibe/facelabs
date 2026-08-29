@@ -144,6 +144,27 @@ class HistorialStore:
         ).fetchone()
         return dict(fila) if fila else None
 
+    def ultima_corrida_sin_limites(self, tipo: str = "indexado") -> dict[str, Any] | None:
+        """La ultima corrida que recorrio el corpus ENTERO.
+
+        Solo esas sirven como denominador ("llevas X de ~Y"): una corrida
+        limitada a 3 carpetas vio 12 fotos, y presentarlo como el total del
+        corpus es simplemente falso. NULL y 0 significan lo mismo aqui — sin
+        limite — porque el front manda null y la CLI puede mandar 0.
+
+        Tambien se exige fotos_vistas: una corrida que reviento antes de
+        contar nada esta "sin limites" pero no aporta ningun total.
+        """
+        fila = self.conn.execute(
+            """SELECT * FROM corridas
+               WHERE tipo=? AND terminada_en IS NOT NULL
+                 AND fotos_vistas IS NOT NULL
+                 AND COALESCE(limite_carpetas, 0) = 0
+                 AND COALESCE(limite_por_carpeta, 0) = 0
+               ORDER BY id DESC LIMIT 1""", (tipo,),
+        ).fetchone()
+        return dict(fila) if fila else None
+
     # ------------------------------------------------------------ busquedas
     def guardar_busqueda(self, persona: str, corpus_dir: str, umbral: float | None,
                          resultado: dict[str, Any]) -> int:
@@ -298,13 +319,15 @@ class HistorialStore:
                )""",
             (n, prefijo, n, prefijo)).fetchone()["c"]
         ultima = self.ultima_corrida()
+        completa = self.ultima_corrida_sin_limites()
         return {
             "procesadas": procesadas,
             "con_rostro": con_rostro,
             "sin_rostro": procesadas - con_rostro,
-            # Denominador del ultimo recorrido completo conocido. Es una
-            # referencia, no una verdad al segundo: el corpus puede crecer
-            # entre corridas.
-            "total_ultimo_conteo": (ultima or {}).get("fotos_vistas"),
+            # Denominador: SOLO de una corrida sin limites. Tomarlo de la
+            # ultima corrida a secas hacia que una prueba acotada a 3 carpetas
+            # reportara "de ~12 fotos" como si fuera el corpus entero. Es una
+            # referencia igual, no una verdad al segundo: el corpus crece.
+            "total_ultimo_conteo": (completa or {}).get("fotos_vistas"),
             "ultima_corrida": ultima,
         }

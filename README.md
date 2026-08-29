@@ -156,6 +156,24 @@ vivos), **Pares** (las dos fotos de cada par, con filtro "sólo errores"),
 Corre sólo en `localhost`, sin deploy ni dominio: el tablero muestra caras de
 personas que dieron consentimiento para un experimento local.
 
+### Sin abrir el tablero
+
+La indexación del corpus de Run es la corrida larga (horas sobre decenas de
+miles de fotos) y no necesita ni el API ni Vite. Desde la terminal:
+
+```bash
+facid indexar-corpus            # la corrida larga; Ctrl+C no pierde nada
+facid cobertura                 # cuántas caras llevas, al instante
+```
+
+En Windows hay dos `.bat` para lanzarlos con doble clic, sin abrir el editor:
+[`scripts/indexar_corpus.bat`](scripts/indexar_corpus.bat) y
+[`scripts/ver_totales.bat`](scripts/ver_totales.bat).
+
+Escriben en la **misma** caché que usa el tablero (`out/index.sqlite`), así que
+lo indexado por CLI ya está disponible para buscar desde el navegador, y al
+revés.
+
 ---
 
 ## Arquitectura

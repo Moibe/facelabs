@@ -828,6 +828,32 @@ def test_historial():
     check(u2["error"] == "RuntimeError: se cayo",
           "una corrida que fallo tambien se registra, con su error")
 
+    # El denominador ("llevas X de ~Y") solo puede salir de un recorrido SIN
+    # limites: la corrida cid de arriba vio 50 fotos pero estaba limitada a 10
+    # carpetas, y presentar ese 50 como el total del corpus seria falso.
+    check(h.ultima_corrida()["id"] == cid2,
+          "fixture: la ultima corrida a secas es la limitada/fallida")
+    # Ninguna sirve todavia: cid tenia limites, y cid2 no los tenia pero
+    # revento sin contar nada (fotos_vistas quedo en NULL).
+    check(h.ultima_corrida_sin_limites() is None,
+          "ni una corrida con limites ni una que fallo sin contar sirven de denominador")
+
+    cid3 = h.iniciar_corrida("indexado", "C:/corpus_falso", 0, 0)   # 0 = sin limite
+    h.cerrar_corrida(cid3, resultado={"carpetas_vistas": 400, "fotos_vistas": 80000,
+                                      "indexadas_ok": 70000, "fallidas": 10000,
+                                      "en_cache": 0, "nuevas": 80000, "detenido": False})
+    completa = h.ultima_corrida_sin_limites()
+    check(completa is not None and completa["fotos_vistas"] == 80000,
+          "una corrida con limites en 0 SI cuenta como recorrido completo")
+
+    cid4 = h.iniciar_corrida("indexado", "C:/corpus_falso", 3, 4)   # limitada, mas reciente
+    h.cerrar_corrida(cid4, resultado={"carpetas_vistas": 3, "fotos_vistas": 12,
+                                      "indexadas_ok": 12, "fallidas": 0,
+                                      "en_cache": 12, "nuevas": 0, "detenido": False})
+    check(h.ultima_corrida()["id"] == cid4, "la limitada nueva SI es la ultima a secas")
+    check(h.ultima_corrida_sin_limites()["fotos_vistas"] == 80000,
+          "pero el denominador sigue siendo el del ultimo recorrido COMPLETO")
+
     # --- busquedas ---
     resultado = {
         "n_indexado": 20, "n_carpetas_indexadas": 4,

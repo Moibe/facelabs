@@ -1,4 +1,4 @@
-"""CLI del PoC. Cinco comandos, uno por etapa del pipeline.
+"""CLI del PoC. Un comando por etapa del pipeline.
 
 Los imports del modelo son perezosos a proposito: `facid calibrate` trabaja
 sobre el CSV y no debe exigir insightface, onnxruntime ni GPU. Asi el analisis
@@ -204,6 +204,119 @@ def cmd_init_manifest(args) -> int:
     return 0
 
 
+# ------------------------------------------------------------- indexar-corpus
+def cmd_indexar_corpus(args) -> int:
+    """Indexa el corpus externo de Run desde la terminal.
+
+    Existe para no depender del API ni del front: es la corrida larga (horas
+    sobre decenas de miles de fotos) y tener que abrir el tablero para
+    lanzarla era una dependencia que no aporta nada. Escribe en la MISMA
+    cache que usa el tablero, asi que lo indexado aqui ya esta disponible
+    para buscar desde ahi.
+    """
+    from .busqueda import indexar_corpus
+    from .config import CORPUS_DIR
+    from .historial import HistorialStore
+
+    corpus = Path(args.corpus_dir) if args.corpus_dir else CORPUS_DIR
+    if not corpus.is_dir():
+        print(f"[X] no existe el corpus: {corpus}", file=sys.stderr)
+        print("    Apuntalo con FACID_CORPUS o pasalo como argumento.", file=sys.stderr)
+        return 2
+
+    print(f"[facid] corpus: {corpus}", flush=True)
+    ultimo = [0.0]
+
+    def progreso(info: dict) -> None:
+        # Una linea por foto serian 90 mil lineas. Se reporta por tiempo, no
+        # por conteo: con la cache tibia pasan miles de fotos por segundo y un
+        # "cada N" imprimiria a borbotones o casi nada segun el tramo.
+        import time
+        ahora = time.time()
+        if info["actual"] == info["total"] or ahora - ultimo[0] >= args.cada:
+            ultimo[0] = ahora
+            pct = info["actual"] / info["total"] * 100 if info["total"] else 0
+            print(f"  {info['actual']:>7}/{info['total']} ({pct:5.1f}%)  "
+                  f"ya estaban {info['en_cache']:>7}  "
+                  f"nuevas {info['nuevas']:>6} "
+                  f"({info['nuevas_ok']} con rostro, {info['nuevas_fallidas']} sin)",
+                  flush=True)
+
+    try:
+        rt = _cargar(args)
+    except Exception as e:      # noqa: BLE001 — el mensaje del runtime ya explica
+        print(f"[X] {e}", file=sys.stderr)
+        return 1
+
+    with HistorialStore() as hist:
+        corrida = hist.iniciar_corrida("indexado", str(corpus),
+                                       args.limite_carpetas, args.limite_por_carpeta)
+        try:
+            r = indexar_corpus(
+                corpus, rt,
+                limite_carpetas=args.limite_carpetas,
+                limite_por_carpeta=args.limite_por_carpeta,
+                face_policy=args.face_policy,
+                on_progreso=progreso)
+            hist.cerrar_corrida(corrida, resultado=r)
+        except KeyboardInterrupt:
+            # Ctrl+C no debe verse como un crash: lo ya guardado sigue en la
+            # cache y la proxima corrida retoma desde ahi.
+            hist.cerrar_corrida(corrida, error="interrumpido con Ctrl+C")
+            print("\n[facid] interrumpido. Lo ya indexado quedo guardado; "
+                  "vuelve a correr esto para seguir.", file=sys.stderr)
+            return 130
+        except Exception as e:  # noqa: BLE001
+            hist.cerrar_corrida(corrida, error=f"{type(e).__name__}: {e}")
+            print(f"[X] {e}", file=sys.stderr)
+            return 1
+
+        cob = hist.cobertura(corpus)
+
+    print(f"\n[facid] {r['fotos_vistas']} fotos vistas en {r['carpetas_vistas']} carpeta(s)")
+    print(f"[facid] procesadas esta vez: {r['nuevas']} "
+          f"({r['nuevas_ok']} con rostro, {r['nuevas_fallidas']} sin)")
+    print(f"[facid] ya estaban en cache: {r['en_cache']}")
+    print("\n--- total acumulado del corpus ---")
+    print(f"  {cob['procesadas']:>8} fotos procesadas")
+    print(f"  {cob['con_rostro']:>8} con rostro usable")
+    print(f"  {cob['sin_rostro']:>8} sin rostro detectable")
+    return 0
+
+
+# ------------------------------------------------------------------ cobertura
+def cmd_cobertura(args) -> int:
+    """Cuantas caras lleva el corpus, sin correr nada.
+
+    No carga el modelo: sale todo de SQLite, asi que responde al instante
+    aunque el corpus tenga decenas de miles de fotos. Es la version rapida de
+    la pregunta que `indexar-corpus` contesta al final de una corrida larga.
+    """
+    from .config import CORPUS_DIR
+    from .historial import HistorialStore
+
+    corpus = Path(args.corpus_dir) if args.corpus_dir else CORPUS_DIR
+    with HistorialStore() as hist:
+        c = hist.cobertura(corpus)
+
+    print(f"corpus: {corpus}")
+    print(f"  {c['procesadas']:>8} fotos procesadas")
+    print(f"  {c['con_rostro']:>8} con rostro usable")
+    print(f"  {c['sin_rostro']:>8} sin rostro detectable")
+    if c["total_ultimo_conteo"]:
+        print(f"\n  de ~{c['total_ultimo_conteo']} vistas en el ultimo recorrido completo")
+        print("  (el corpus puede haber crecido desde entonces)")
+    u = c["ultima_corrida"]
+    if u:
+        estado = "detenida antes de terminar" if u["detenido"] else "completa"
+        if u["error"]:
+            estado = f"fallo: {u['error']}"
+        print(f"\n  ultima indexacion: {u['terminada_en']}  ({estado})")
+    else:
+        print("\n  todavia no hay ninguna indexacion registrada")
+    return 0
+
+
 # ------------------------------------------------------------------ calibrate
 def cmd_calibrate(args) -> int:
     # Sin imports del modelo: esto corre en cualquier maquina.
@@ -262,6 +375,27 @@ def build_parser() -> argparse.ArgumentParser:
     _añadir_flags_modelo(r)
     r.add_argument("--force", action="store_true")
     r.set_defaults(func=cmd_run_manifest)
+
+    ic = sub.add_parser(
+        "indexar-corpus",
+        help="Extrae y cachea los rostros del corpus externo de Run (la corrida larga).")
+    ic.add_argument("corpus_dir", nargs="?", default=None,
+                    help="Carpeta del corpus. Default: FACID_CORPUS (ver config.py).")
+    _añadir_flags_modelo(ic)
+    ic.add_argument("--limite-carpetas", type=int, default=None,
+                    help="Solo las primeras N carpetas (alfabetico). 0 o vacio = todas.")
+    ic.add_argument("--limite-por-carpeta", type=int, default=None,
+                    help="Solo las primeras N fotos de cada carpeta. 0 o vacio = todas.")
+    ic.add_argument("--cada", type=float, default=5.0,
+                    help="Segundos entre lineas de avance (default: %(default)s).")
+    ic.set_defaults(func=cmd_indexar_corpus)
+
+    cb = sub.add_parser(
+        "cobertura",
+        help="Cuantas caras lleva el corpus, al instante (no carga el modelo).")
+    cb.add_argument("corpus_dir", nargs="?", default=None,
+                    help="Carpeta del corpus. Default: FACID_CORPUS (ver config.py).")
+    cb.set_defaults(func=cmd_cobertura)
 
     k = sub.add_parser("calibrate", help="Analisis de calibracion sobre el CSV (sin GPU).")
     k.add_argument("csv")
