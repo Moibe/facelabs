@@ -1035,19 +1035,24 @@
 		flex-direction: column;
 	}
 
-	/* margin-left: auto empuja el pastel hacia el borde derecho de la
-	   tarjeta, aunque las cifras de la izquierda no llenen todo el ancho.
-	   overflow: visible porque el callout de hover se sale del viewBox de
+	/* overflow: visible porque el callout de hover se sale del viewBox de
 	   64x64 (el texto vive afuera del anillo, no adentro).
 
-	   El margin-right NO es aire decorativo: reserva el lugar donde caen las
-	   etiquetas de los segmentos de la mitad derecha. Sin el, el texto se
-	   salia de la tarjeta en vez de quedar dentro. */
+	   Los margenes NO son aire decorativo: reservan el lugar donde caen las
+	   etiquetas, que salen del SVG por los dos lados segun donde quede el
+	   segmento. Sin ellos el texto se encima con la ultima cifra por la
+	   izquierda, o se sale de la tarjeta por la derecha.
+
+	   Y el margin-left es fijo, no `auto`: con `auto` el pastel se pegaba al
+	   borde derecho de la tarjeta y la distancia a las cifras dependia del
+	   ancho de la ventana — justo lo que tiene que quedar acotado para que
+	   la etiqueta de la izquierda no aterrice sobre "~102,032". Anclado a
+	   las cifras, el espacio que sobra se va todo al lado derecho. */
 	.pastel {
 		width: 100px;
 		height: 100px;
 		flex: none;
-		margin-left: auto;
+		margin-left: 6rem;
 		margin-right: 7rem;
 		align-self: center;
 		overflow: visible;
