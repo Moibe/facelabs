@@ -166,9 +166,13 @@ facid indexar-corpus            # la corrida larga; Ctrl+C no pierde nada
 facid cobertura                 # cuántas caras llevas, al instante
 ```
 
-En Windows hay dos `.bat` para lanzarlos con doble clic, sin abrir el editor:
-[`scripts/indexar_corpus.bat`](scripts/indexar_corpus.bat) y
-[`scripts/ver_totales.bat`](scripts/ver_totales.bat).
+En Windows hay `.bat` para lanzar todo con doble clic, sin abrir el editor:
+
+| Script | Qué hace |
+|---|---|
+| [`scripts/arrancar_app.bat`](scripts/arrancar_app.bat) | Levanta **API + tablero**. Abre <http://localhost:1000> |
+| [`scripts/indexar_corpus.bat`](scripts/indexar_corpus.bat) | La corrida larga, sin app |
+| [`scripts/ver_totales.bat`](scripts/ver_totales.bat) | Cuántas caras llevas, al instante |
 
 Escriben en la **misma** caché que usa el tablero (`out/index.sqlite`), así que
 lo indexado por CLI ya está disponible para buscar desde el navegador, y al
