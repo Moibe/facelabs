@@ -98,22 +98,42 @@
 	// entre "procesada" y "sin procesar" cae en el MISMO angulo en los dos
 	// anillos — por eso ambos se calculan sobre el mismo total (~102,032) y
 	// no cada uno sobre su propia suma, si no, no alinearian.
-	type Rebanada = { etiqueta: string; valor: number; color: string };
+	type Rebanada = { id: string; etiqueta: string; valor: number; color: string };
 	const anilloExterior = $derived.by((): Rebanada[] => {
 		if (!cobertura || !cobertura.total_ultimo_conteo) return [];
 		const pendientes = Math.max(0, cobertura.total_ultimo_conteo - cobertura.procesadas);
 		return [
-			{ etiqueta: 'con rostro usable', valor: cobertura.con_rostro, color: 'var(--bien)' },
-			{ etiqueta: 'sin rostro detectable', valor: cobertura.sin_rostro, color: 'var(--mal)' },
-			{ etiqueta: 'sin procesar aún', valor: pendientes, color: 'rgba(255, 255, 255, 0.16)' }
+			{ id: 'ext:con_rostro', etiqueta: 'con rostro usable', valor: cobertura.con_rostro, color: 'var(--bien)' },
+			{
+				id: 'ext:sin_rostro',
+				etiqueta: 'sin rostro detectable',
+				valor: cobertura.sin_rostro,
+				color: 'var(--mal)'
+			},
+			{
+				id: 'ext:pendientes',
+				etiqueta: 'sin procesar aún',
+				valor: pendientes,
+				color: 'rgba(255, 255, 255, 0.16)'
+			}
 		].filter((r) => r.valor > 0);
 	});
 	const anilloInterior = $derived.by((): Rebanada[] => {
 		if (!cobertura || !cobertura.total_ultimo_conteo) return [];
 		const pendientes = Math.max(0, cobertura.total_ultimo_conteo - cobertura.procesadas);
 		return [
-			{ etiqueta: 'fotos ya procesadas', valor: cobertura.procesadas, color: 'rgba(255, 255, 255, 0.6)' },
-			{ etiqueta: 'sin procesar aún', valor: pendientes, color: 'rgba(255, 255, 255, 0.16)' }
+			{
+				id: 'int:procesadas',
+				etiqueta: 'fotos ya procesadas',
+				valor: cobertura.procesadas,
+				color: 'rgba(255, 255, 255, 0.6)'
+			},
+			{
+				id: 'int:pendientes',
+				etiqueta: 'sin procesar aún',
+				valor: pendientes,
+				color: 'rgba(255, 255, 255, 0.16)'
+			}
 		].filter((r) => r.valor > 0);
 	});
 
@@ -127,15 +147,72 @@
 		const c = 2 * Math.PI * r;
 		let acumulado = 0;
 		return piezas.map((p) => {
+			const inicioFrac = acumulado / total;
 			const largo = (p.valor / total) * c;
-			const offset = -((acumulado / total) * c);
+			const offset = -(inicioFrac * c);
 			acumulado += p.valor;
-			return { ...p, pct: p.valor / total, dasharray: `${largo} ${c - largo}`, dashoffset: offset };
+			return {
+				...p,
+				r,
+				pct: p.valor / total,
+				inicioFrac,
+				dasharray: `${largo} ${c - largo}`,
+				dashoffset: offset
+			};
 		});
 	}
 
+	const GROSOR_ANILLO = 9;
+	const CX = 32;
+	const CY = 32;
 	const segmentosExterior = $derived(segmentosAnillo(anilloExterior, 26));
 	const segmentosInterior = $derived(segmentosAnillo(anilloInterior, 15));
+
+	// ── Callout (línea + etiqueta) del segmento en hover, igual que en el
+	// pastel de fortunecity: un punto en el borde del anillo, un codo un poco
+	// más afuera y un tramo horizontal hacia el texto. Ahí SIEMPRE se ancla
+	// a la izquierda (texto con text-anchor="end"), a diferencia de
+	// fortunecity que decide el lado segun el angulo: este pastel vive
+	// pegado al borde derecho de la tarjeta (margin-left:auto), asi que a la
+	// derecha no hay espacio para el texto caiga donde caiga la rebanada.
+	let hoveredPastel = $state<string | null>(null);
+
+	type Callout = {
+		x1: number;
+		y1: number;
+		x2: number;
+		y2: number;
+		x3: number;
+		y3: number;
+		etiqueta: string;
+		valor: number;
+		pct: number;
+	};
+	function calloutDeSegmento(s: { r: number; inicioFrac: number; pct: number; etiqueta: string; valor: number }): Callout {
+		const anguloGrados = (s.inicioFrac + s.pct / 2) * 360;
+		const rad = ((anguloGrados - 90) * Math.PI) / 180;
+		const cosA = Math.cos(rad);
+		const sinA = Math.sin(rad);
+		const r1 = s.r + GROSOR_ANILLO / 2; // borde visible de ese anillo
+		const r2 = r1 + 6; // codo, un poco más afuera
+		const kink = 22; // tramo horizontal, siempre hacia la izquierda
+		return {
+			x1: CX + r1 * cosA,
+			y1: CY + r1 * sinA,
+			x2: CX + r2 * cosA,
+			y2: CY + r2 * sinA,
+			x3: CX + r2 * cosA - kink,
+			y3: CY + r2 * sinA,
+			etiqueta: s.etiqueta,
+			valor: s.valor,
+			pct: s.pct
+		};
+	}
+	const calloutPastel = $derived.by((): Callout | null => {
+		if (!hoveredPastel) return null;
+		const s = segmentosExterior.find((x) => x.id === hoveredPastel) ?? segmentosInterior.find((x) => x.id === hoveredPastel);
+		return s ? calloutDeSegmento(s) : null;
+	});
 
 	// Poder VER las fotos detrás de cada cifra: el conteo solo no dice si lo
 	// que falla son recortes malos, ni cuáles caras hubo que rescatar con
@@ -403,33 +480,56 @@
 						aria-label="Proporción del corpus: procesadas vs pendientes, y de las procesadas, con rostro vs sin rostro"
 					>
 						<g transform="rotate(-90 32 32)">
-							{#each segmentosInterior as s (s.etiqueta)}
+							{#each segmentosInterior as s (s.id)}
+								<!-- svelte-ignore a11y_no_static_element_interactions -->
 								<circle
 									cx="32"
 									cy="32"
 									r="15"
 									fill="none"
 									stroke={s.color}
-									stroke-width="9"
+									stroke-width={hoveredPastel === s.id ? GROSOR_ANILLO + 2 : GROSOR_ANILLO}
 									stroke-dasharray={s.dasharray}
 									stroke-dashoffset={s.dashoffset}
+									class="seg-pastel"
+									class:dim={hoveredPastel !== null && hoveredPastel !== s.id}
+									onmouseenter={() => (hoveredPastel = s.id)}
+									onmouseleave={() => (hoveredPastel = null)}
 									><title>{s.etiqueta}: {s.valor.toLocaleString()} ({pct(s.pct)})</title></circle
 								>
 							{/each}
-							{#each segmentosExterior as s (s.etiqueta)}
+							{#each segmentosExterior as s (s.id)}
+								<!-- svelte-ignore a11y_no_static_element_interactions -->
 								<circle
 									cx="32"
 									cy="32"
 									r="26"
 									fill="none"
 									stroke={s.color}
-									stroke-width="9"
+									stroke-width={hoveredPastel === s.id ? GROSOR_ANILLO + 2 : GROSOR_ANILLO}
 									stroke-dasharray={s.dasharray}
 									stroke-dashoffset={s.dashoffset}
+									class="seg-pastel"
+									class:dim={hoveredPastel !== null && hoveredPastel !== s.id}
+									onmouseenter={() => (hoveredPastel = s.id)}
+									onmouseleave={() => (hoveredPastel = null)}
 									><title>{s.etiqueta}: {s.valor.toLocaleString()} ({pct(s.pct)})</title></circle
 								>
 							{/each}
 						</g>
+						{#if calloutPastel}
+							{@const c = calloutPastel}
+							<g class="callout-pastel">
+								<circle cx={c.x1} cy={c.y1} r="1.6" fill="#fff" />
+								<polyline points="{c.x1},{c.y1} {c.x2},{c.y2} {c.x3},{c.y3}" class="callout-linea" />
+								<text x={c.x3 - 2} y={c.y3 - 3} text-anchor="end" class="callout-nombre">
+									{c.etiqueta}
+								</text>
+								<text x={c.x3 - 2} y={c.y3 + 6} text-anchor="end" class="callout-sub">
+									{c.valor.toLocaleString()} · {pct(c.pct)}
+								</text>
+							</g>
+						{/if}
 					</svg>
 				{/if}
 			</div>
@@ -910,13 +1010,55 @@
 	}
 
 	/* margin-left: auto empuja el pastel hasta el borde derecho de la
-	   tarjeta, aunque las cifras de la izquierda no llenen todo el ancho. */
+	   tarjeta, aunque las cifras de la izquierda no llenen todo el ancho.
+	   overflow: visible porque el callout de hover se sale del viewBox de
+	   64x64 (el texto vive afuera del anillo, no adentro). */
 	.pastel {
 		width: 72px;
 		height: 72px;
 		flex: none;
 		margin-left: auto;
+		margin-right: 1.6rem;
 		align-self: center;
+		overflow: visible;
+	}
+
+	.seg-pastel {
+		cursor: pointer;
+		transition:
+			stroke-width 0.15s ease,
+			opacity 0.15s ease;
+	}
+
+	.seg-pastel.dim {
+		opacity: 0.4;
+	}
+
+	/* Mismo patrón que el callout de fortunecity (línea delgada del color del
+	   segmento hacia una etiqueta afuera), pero siempre ancla a la
+	   izquierda: este pastel vive pegado al borde derecho de la tarjeta, así
+	   que a la derecha no hay lugar para el texto caiga donde caiga la
+	   rebanada. */
+	.callout-pastel {
+		pointer-events: none;
+	}
+
+	.callout-linea {
+		fill: none;
+		stroke: rgba(255, 255, 255, 0.7);
+		stroke-width: 1;
+	}
+
+	.callout-nombre {
+		fill: var(--ink);
+		font-size: 6.5px;
+		font-weight: 600;
+	}
+
+	.callout-sub {
+		fill: var(--ink-3);
+		font-size: 6px;
+		font-variant-numeric: tabular-nums;
 	}
 
 	.cifra .n {
