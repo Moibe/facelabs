@@ -13,11 +13,17 @@
 	// una cadena de condiciones que hay que tocar cada vez que se agrega una.
 	// Labs es la que no tiene prefijo propio (vive en /, /set, /pares…), así
 	// que se define como "ninguna de las otras".
+	// `alaDerecha` la declaran las TRES, no solo la que la usa: si se dejara
+	// implícita en una sola, el tipo del arreglo sería una unión y leer la
+	// propiedad en las otras no compilaría.
 	const SECCIONES = [
-		{ href: '/set', etiqueta: 'Labs', prefijo: null },
-		{ href: '/run', etiqueta: 'Run', prefijo: /^\/run/ },
-		{ href: '/corpus', etiqueta: 'Corpus', prefijo: /^\/corpus/ }
+		{ href: '/run', etiqueta: 'Run', prefijo: /^\/run/, alaDerecha: false },
+		{ href: '/corpus', etiqueta: 'Corpus', prefijo: /^\/corpus/, alaDerecha: false },
+		{ href: '/set', etiqueta: 'Labs', prefijo: null, alaDerecha: true }
 	];
+
+	const seccionesIzquierda = SECCIONES.filter((s) => !s.alaDerecha);
+	const seccionesDerecha = SECCIONES.filter((s) => s.alaDerecha);
 
 	const ruta = $derived(page.url.pathname);
 	const conPrefijo = $derived(
@@ -62,7 +68,7 @@
 	<div class="lema">verificación 1:1 · research, no comercial</div>
 
 	<nav class="secciones" aria-label="Secciones">
-		{#each SECCIONES as s (s.href)}
+		{#each seccionesIzquierda as s (s.href)}
 			<a
 				href={s.href}
 				class="seccion"
@@ -74,6 +80,22 @@
 	</nav>
 
 	<div class="spacer"></div>
+
+	<!-- Labs va del otro lado del spacer, o sea pegado a la derecha. Es un
+	     <nav> aparte y no una continuación del de arriba: dos grupos
+	     separados en pantalla que dijeran ser la misma lista se leerían raro
+	     con lector de pantalla. -->
+	<nav class="secciones secciones-derecha" aria-label="Sección Labs">
+		{#each seccionesDerecha as s (s.href)}
+			<a
+				href={s.href}
+				class="seccion"
+				aria-current={activa(s, ruta, conPrefijo) ? 'page' : undefined}
+			>
+				{s.etiqueta}
+			</a>
+		{/each}
+	</nav>
 
 	<!-- "API apagada" sí aplica en todas partes: sin API tampoco funciona Run.
 	     El CSV en cambio es de Labs — es la salida de una calibración, y Run
@@ -171,6 +193,14 @@
 		display: flex;
 		gap: 0.3rem;
 		margin-left: 1.5rem;
+	}
+
+	/* El margen izquierdo de .secciones lo separa de la marca; a la derecha
+	   ese hueco lo pone el spacer, y encima el margen la despegaría del
+	   indicador de estado que va después. */
+	.secciones-derecha {
+		margin-left: 0;
+		margin-right: 1rem;
 	}
 
 	.seccion {
