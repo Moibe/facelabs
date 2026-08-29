@@ -92,10 +92,17 @@
 				{/each}
 			</select>
 		</label>
-		<label class="check">
-			<input type="checkbox" bind:checked={soloConMargen} />
-			sólo las que necesitaron margen
-		</label>
+		<span class="check-con-info">
+			<label class="check">
+				<input type="checkbox" bind:checked={soloConMargen} />
+				sólo las que necesitaron margen
+			</label>
+			<span
+				class="info"
+				title="Fotos cuyo recorte venía tan pegado a la cara que el detector no las encontraba: sólo se detectaron después de rellenarles el borde artificialmente (margen agregado)."
+				>i</span
+			>
+		</span>
 	</div>
 	<p class="tenue">
 		{#if cargando && !fotos.length}
@@ -190,6 +197,28 @@
 		text-transform: none;
 		letter-spacing: normal;
 		font-size: 0.86rem;
+	}
+
+	.check-con-info {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.35rem;
+	}
+
+	.info {
+		display: inline-flex;
+		flex: none;
+		align-items: center;
+		justify-content: center;
+		width: 1.1rem;
+		height: 1.1rem;
+		border-radius: 50%;
+		border: 1px solid rgba(255, 255, 255, 0.35);
+		font-size: 0.68rem;
+		font-style: italic;
+		font-weight: 700;
+		color: var(--ink-3);
+		cursor: help;
 	}
 
 	.controles select {
