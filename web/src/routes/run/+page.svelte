@@ -1032,6 +1032,13 @@
 		color: #fcd34d;
 	}
 
+	/* Sin esto el link hereda el azul default del browser, casi invisible
+	   sobre el fondo azul oscuro de esta franja. Un amarillo mas dorado que
+	   el de .rescatada para no confundirse con ese otro significado. */
+	.enlace {
+		color: #fbbf24;
+	}
+
 	.num {
 		font-family: ui-monospace, Consolas, monospace;
 		text-align: right;
