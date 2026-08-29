@@ -342,6 +342,12 @@
 						{/if}
 					</span>
 				</button>
+				{#if cobertura.total_ultimo_conteo}
+					<div class="cifra">
+						<span class="n">~{cobertura.total_ultimo_conteo.toLocaleString()}</span>
+						<span class="et">en el corpus (último recorrido)</span>
+					</div>
+				{/if}
 			</div>
 
 			{#if tira}
@@ -396,8 +402,8 @@
 			{/if}
 			<p class="tenue">
 				{#if cobertura.total_ultimo_conteo}
-					De ~{cobertura.total_ultimo_conteo.toLocaleString()} vistas en el último recorrido completo.
-					El corpus crece solo, así que es una referencia, no un total al segundo.
+					El corpus crece solo, así que esa cifra es del último recorrido completo, no un total
+					al segundo.
 				{/if}
 				{#if cobertura.ultima_corrida?.terminada_en}
 					Última indexación: {fecha(cobertura.ultima_corrida.terminada_en)}
